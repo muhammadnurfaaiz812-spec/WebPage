@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  Suspense,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -1003,7 +1004,7 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
    ditemukan, sama seperti di beranda.
    ──────────────────────────────────────────────────────────── */
 
-export default function TaskDetailPage() {
+function TaskDetailContent() {
   const params = useParams<{ id: string }>();
   const id = String(params.id ?? "");
   const { tasks, loading, error } = useTasks();
@@ -1072,6 +1073,7 @@ export default function TaskDetailPage() {
             }
           />
         )}
+        
       </main>
 
       <footer className="w-full border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
@@ -1082,5 +1084,22 @@ export default function TaskDetailPage() {
         </div>
       </footer>
     </div>
+  );
+}
+
+export default function TaskDetailPage() {
+  return (
+    <Suspense
+      fallback={
+        <div
+          role="status"
+          className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-400"
+        >
+          Memuat tugas...
+        </div>
+      }
+    >
+      <TaskDetailContent />
+    </Suspense>
   );
 }
