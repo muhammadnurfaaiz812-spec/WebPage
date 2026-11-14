@@ -30,5 +30,5 @@ export async function getPublishedTasks(): Promise<Task[]> {
         throw new Error("Tidak dapat mengambil data tugas.");
     }
 
-    return (data ?? []) as Task[];
+    return (data ?? []) as unknown as Task[];
 }
