@@ -14,11 +14,28 @@ import {
   type ReactNode,
 } from "react";
 import { useTasks } from "@/features/tasks/hooks/useTasks";
+import {
+  getDocumentUrls,
+  getFileExtension,
+  getThumbnailUrl,
+} from "@/features/tasks/lib/documents";
+import { WORK_TYPE_LABEL, type WorkType } from "@/features/tasks/types/task";
 
 /* ────────────────────────────────────────────────────────────
    DATA
    Halaman ini tidak terikat ke satu mata kuliah: daftar mata kuliah
    dan semester di filter dibentuk otomatis dari data tugas.
+
+   Kartu mengikuti database dan panel admin:
+   - Tombol "Unduh" dan chip berkas hanya muncul kalau tugas punya berkas
+     (document_path terisi). Tanpa berkas, tombolnya nonaktif.
+   - Chip "Individu" / "Kelompok" berasal dari kolom work_type, yang
+     diatur lewat dropdown "Jenis tugas" di panel admin.
+   - Gambar di atas kartu adalah cuplikan halaman 1 berkas PDF (kolom
+     thumbnail_path), dibuat otomatis di panel admin saat berkas diunggah.
+     Berkas non-PDF, tugas tanpa berkas, atau gambar yang gagal dimuat
+     memakai sampul pengganti (ikon sesuai jenis berkas), jadi setiap
+     kartu selalu punya area gambar dan tingginya seragam.
    Field bertanda "opsional" boleh dihapus; UI akan menyesuaikan.
    ──────────────────────────────────────────────────────────── */
 
@@ -35,12 +52,13 @@ type Task = {
   semester: string;
   deadline: string; // format ISO: YYYY-MM-DD
   description: string;
-  type: string;
+  workType: WorkType; // dari kolom work_type
   status: Status;
-  fileType: string;
+  fileType?: string; // ekstensi berkas, contoh: "PDF" (hanya ada kalau berkas ada)
   fileSize?: string; // opsional, contoh: "1.8 MB"
   meeting?: string; // opsional, contoh: "Pertemuan 9"
-  fileUrl?: string; // opsional, tombol "Unduh" aktif kalau diisi
+  fileUrl?: string; // tautan unduh; tombol "Unduh" aktif hanya kalau diisi
+  previewUrl?: string; // gambar pratinjau berkas; sampul pengganti kalau kosong
 };
 
 const profile = {
@@ -241,6 +259,14 @@ const surface =
 const dashedBox =
   "rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center dark:border-slate-700 dark:bg-slate-900";
 
+// Sampul pengganti di kartu tanpa gambar pratinjau: latar bertint brand
+// dan ubin putih untuk ikon jenis berkas
+const coverBg =
+  "bg-gradient-to-br from-emerald-50 via-emerald-100/60 to-slate-100 dark:from-emerald-500/10 dark:via-emerald-500/5 dark:to-slate-800";
+
+const coverTile =
+  "bg-white text-emerald-700 shadow-md shadow-emerald-900/10 ring-1 ring-emerald-100 dark:bg-slate-900 dark:text-emerald-300 dark:ring-emerald-500/20";
+
 // Teks netral. textMuted dipakai untuk deskripsi dan meta (kontras ±7:1 di atas putih)
 const textHeading = "text-slate-900 dark:text-slate-50";
 const textMuted = "text-slate-600 dark:text-slate-400";
@@ -359,10 +385,31 @@ const ICONS = {
       <path d="M14 2v6h6M16 13H8M16 17H8" />
     </>
   ),
+  table: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 10h18M3 15h18M9 4v16" />
+    </>
+  ),
+  slides: (
+    <>
+      <path d="M2 3h20" />
+      <path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3" />
+      <path d="m7 21 5-5 5 5" />
+    </>
+  ),
   user: (
     <>
       <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
       <circle cx="12" cy="7" r="4" />
+    </>
+  ),
+  users: (
+    <>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
     </>
   ),
   bookmark: <path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" />,
@@ -453,30 +500,107 @@ function SelectField({
   );
 }
 
+// Ikon sampul pengganti menurut ekstensi berkas; selain daftar ini memakai "file"
+const COVER_ICON: Record<string, IconName> = {
+  XLSX: "table",
+  XLS: "table",
+  CSV: "table",
+  PPTX: "slides",
+  PPT: "slides",
+};
+
+/** Sampul pengganti: latar bertint, pola titik, dan ubin berisi ikon jenis berkas.
+    Hanya ikon, tanpa teks, karena jenis berkas sudah ada di chip di bawah. */
+function CoverPlaceholder({ fileType }: { fileType?: string }) {
+  const icon = (fileType && COVER_ICON[fileType.toUpperCase()]) || "file";
+  return (
+    <div
+      aria-hidden="true"
+      className={`absolute inset-0 flex items-center justify-center ${coverBg}`}
+    >
+      <span
+        className="absolute inset-0 opacity-70 dark:opacity-40"
+        style={{
+          backgroundImage:
+            "radial-gradient(rgba(16,185,129,0.22) 1px, transparent 1px)",
+          backgroundSize: "16px 16px",
+        }}
+      />
+      <span
+        className={`relative flex h-16 w-16 items-center justify-center rounded-2xl transition duration-300 group-hover:-rotate-3 group-hover:scale-105 motion-reduce:transition-none motion-reduce:group-hover:transform-none ${coverTile}`}
+      >
+        <Icon name={icon} className="h-8 w-8" />
+      </span>
+    </div>
+  );
+}
+
 /*
   Susunan kartu, dari atas ke bawah:
+  0. Sampul 16:9, selalu ada supaya semua kartu seragam:
+     - pratinjau halaman 1 berkas PDF (bagian atas) kalau ada dan berhasil dimuat
+     - selain itu sampul pengganti dengan ikon sesuai jenis berkas
   1. Mata kuliah (+ status bila bukan bawaan) di kiri, tanggal di kanan
   2. Judul (maks. 3 baris) dan deskripsi (maks. 3 baris)
-  3. Metadata berkas, selalu menempel di bawah isi
-  4. Bilah aksi terpisah garis: Lihat Detail (utama) dan Unduh
+  3. Chip metadata, selalu menempel di bawah isi:
+     - jenis berkas, hanya kalau berkas diunggah (kolom document_*)
+     - jenis tugas Individu / Kelompok (kolom work_type)
+  4. Bilah aksi terpisah garis: Lihat Detail (utama) dan Unduh.
+     Unduh hanya aktif kalau tugas punya berkas.
   Bilah aksi selalu sejajar antar-kartu walau panjang judul berbeda.
 */
 function TaskCard({ task }: { task: Task }) {
   const status = STATUS_STYLE[task.status];
+  const [previewState, setPreviewState] = useState<
+    "loading" | "ready" | "failed"
+  >("loading");
+  const showPreview = Boolean(task.previewUrl) && previewState !== "failed";
 
-  const chips: { icon: IconName; text: string }[] = [
-    {
+  const chips: { icon: IconName; text: string }[] = [];
+  if (task.fileUrl) {
+    const label = task.fileType ?? "Berkas";
+    chips.push({
       icon: "file",
-      text: task.fileSize ? `${task.fileType} • ${task.fileSize}` : task.fileType,
-    },
-  ];
+      text: task.fileSize ? `${label} • ${task.fileSize}` : label,
+    });
+  }
   if (task.meeting) chips.push({ icon: "bookmark", text: task.meeting });
-  chips.push({ icon: "user", text: task.type });
+  chips.push({
+    icon: task.workType === "group" ? "users" : "user",
+    text: WORK_TYPE_LABEL[task.workType],
+  });
 
   return (
     <article
       className={`${surface} group flex h-full flex-col overflow-hidden rounded-2xl shadow-sm transition duration-200 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-900/5 dark:hover:border-emerald-500/40 dark:hover:shadow-none`}
     >
+      {/* Sampul. Berupa tautan ke halaman detail, tapi disembunyikan dari
+          pembaca layar dan urutan Tab karena "Lihat Detail" sudah ada.
+          Sampul pengganti selalu digambar di bawah; pratinjau menutupinya
+          setelah selesai dimuat, jadi tidak ada kedipan atau loncatan tata letak. */}
+      <Link
+        href={`/tugas/${task.id}`}
+        tabIndex={-1}
+        aria-hidden="true"
+        className="relative block aspect-[16/9] shrink-0 overflow-hidden border-b border-slate-200 dark:border-slate-800"
+      >
+        <CoverPlaceholder fileType={task.fileType} />
+        {showPreview && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={task.previewUrl}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            onLoad={() => setPreviewState("ready")}
+            onError={() => setPreviewState("failed")}
+            className={`absolute inset-0 h-full w-full bg-white object-cover object-top transition duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:transform-none ${
+              previewState === "ready" ? "opacity-100" : "opacity-0"
+            }`}
+          />
+        )}
+      </Link>
+
       <div className="flex flex-1 flex-col p-4 sm:p-5">
         {/* Mata kuliah, status (hanya jika bukan bawaan), tanggal */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
@@ -524,7 +648,7 @@ function TaskCard({ task }: { task: Task }) {
           {task.description}
         </p>
 
-        {/* Metadata berkas */}
+        {/* Metadata */}
         <div className="mt-auto flex flex-wrap gap-2 pt-4">
           {chips.map((chip) => (
             <span
@@ -558,6 +682,7 @@ function TaskCard({ task }: { task: Task }) {
           <a
             href={task.fileUrl}
             download
+            aria-label={`Unduh berkas: ${task.title}`}
             className={`group/btn px-4 ${btnShape} ${btnNeutral} ${hoverBrand} ${focusRing}`}
           >
             <Icon
@@ -588,6 +713,7 @@ function TaskSkeleton() {
       aria-hidden="true"
       className={`${surface} animate-pulse overflow-hidden rounded-2xl shadow-sm`}
     >
+      <div className="aspect-[16/9] border-b border-slate-200 bg-slate-100 dark:border-slate-800 dark:bg-slate-800" />
       <div className="p-4 sm:p-5">
         <div className="flex gap-2">
           <div className="h-6 w-28 rounded-md bg-slate-200 dark:bg-slate-700" />
@@ -650,21 +776,27 @@ export default function Home() {
   );
   const { tasks: databaseTasks, loading, error } = useTasks();
 
+  // Satu tugas di database menjadi satu kartu. Berkas dan jenis tugas dibaca
+  // dari kolom yang diisi lewat panel admin; tanpa berkas, fileUrl kosong
+  // sehingga chip berkas tidak tampil dan tombol Unduh nonaktif.
   const tasks: Task[] = useMemo(
     () =>
-      databaseTasks.map((item) => ({
-        id: item.id,
-        title: item.title,
-        course: item.courses?.name ?? "Mata Kuliah",
-        semester: `Semester ${item.semester}`,
-        deadline: item.deadline ?? "",
-        description: item.description ?? "",
-        type: "Individu",
-        status: DEFAULT_STATUS,
-        fileType:
-          item.document_name?.split(".").pop()?.toUpperCase() ?? "Dokumen",
-        fileSize: undefined,
-      })),
+      databaseTasks.map((item) => {
+        const urls = getDocumentUrls(item.document_path, item.document_name);
+        return {
+          id: item.id,
+          title: item.title,
+          course: item.courses?.name ?? "Mata Kuliah",
+          semester: `Semester ${item.semester}`,
+          deadline: item.deadline ?? "",
+          description: item.description ?? "",
+          workType: item.work_type === "group" ? "group" : "individual",
+          status: DEFAULT_STATUS,
+          fileType: urls ? getFileExtension(item.document_name) : undefined,
+          fileUrl: urls?.download,
+          previewUrl: getThumbnailUrl(item.thumbnail_path),
+        };
+      }),
     [databaseTasks]
   );
 

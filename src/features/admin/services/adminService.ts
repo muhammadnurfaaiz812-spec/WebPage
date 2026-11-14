@@ -1,17 +1,22 @@
 import { supabase } from "@/lib/supabase/client";
+import { DOCUMENT_BUCKET } from "@/features/tasks/lib/documents";
 import type { Task, TaskStatus } from "@/features/tasks/types/task";
 
 /* ────────────────────────────────────────────────────────────
    KONFIGURASI
    ──────────────────────────────────────────────────────────── */
 
-// Harus sama dengan bucket di SQL dan DOCUMENT_BUCKET di halaman detail publik
-export const DOCUMENT_BUCKET = "task-documents";
+// Nama bucket ada di @/features/tasks/lib/documents (dipakai bersama halaman publik)
 
 // Harus sama dengan batas dan jenis berkas yang diizinkan bucket
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const FILE_EXTENSIONS = [
   ".pdf",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".gif",
   ".doc",
   ".docx",
   ".ppt",
@@ -34,11 +39,12 @@ export type TaskInput = Pick<
   | "academic_year"
   | "deadline"
   | "status"
+  | "work_type"
 >;
 
 const TASK_SELECT = `
   id, course_id, title, description, semester, academic_year, deadline,
-  status, document_name, document_path, created_at,
+  status, work_type, document_name, document_path, thumbnail_path, created_at,
   courses ( name )
 `;
 
@@ -195,48 +201,83 @@ export async function deleteTask(task: Task) {
     .select("id");
   if (error) fail("Gagal menghapus tugas", error);
   ensureChanged(data, "Gagal menghapus tugas");
-  if (task.document_path) await removeFiles([task.document_path]);
+  await removeFiles(
+    [task.document_path, task.thumbnail_path].filter((p): p is string =>
+      Boolean(p)
+    )
+  );
 }
 
 /**
- * Simpan tugas baru atau perubahan. Urutannya sengaja:
- * unggah berkas baru, simpan baris, lalu hapus berkas lama. Kalau
- * penyimpanan gagal, unggahan baru dibersihkan supaya tidak yatim.
- * Berkas disimpan di "<task_id>/<nama-aman>", nilai itu juga yang
- * dicatat di tasks.document_path (tanpa nama bucket).
+ * Simpan tugas baru atau perubahan. Urutannya sengaja: unggah berkas dan
+ * pratinjau baru, simpan baris, lalu hapus yang lama. Kalau ada langkah yang
+ * gagal, unggahan baru dibersihkan supaya tidak ada berkas yatim.
+ *
+ * Berkas disimpan di "<task_id>/<nama-aman>", pratinjau di
+ * "<task_id>/preview-<waktu>.jpg" (nama unik supaya cache tidak menampilkan
+ * gambar lama). Path itu dicatat di document_path dan thumbnail_path, tanpa
+ * nama bucket.
  */
 export async function saveTask(args: {
   input: TaskInput;
   previous: Task | null; // null = tugas baru
   newFile: File | null;
   removeFile: boolean;
+  newPreview: Blob | null; // JPEG pratinjau, dibuat di browser dari PDF
 }) {
-  const { input, previous, newFile, removeFile } = args;
+  const { input, previous, newFile, removeFile, newPreview } = args;
 
   const oldPath = previous?.document_path ?? null;
+  const oldThumb = previous?.thumbnail_path ?? null;
   let document_name = previous?.document_name ?? null;
   let document_path = oldPath;
+  let thumbnail_path = oldThumb;
   let uploadedPath: string | null = null;
+  let uploadedThumb: string | null = null;
 
-  if (newFile) {
-    uploadedPath = `${input.id}/${safeFileName(newFile.name)}`;
-    const { error } = await supabase.storage
-      .from(DOCUMENT_BUCKET)
-      .upload(uploadedPath, newFile, {
-        upsert: true,
-        cacheControl: "3600",
-        contentType: newFile.type || undefined,
-      });
-    if (error) fail("Gagal mengunggah berkas", error);
-    document_name = newFile.name;
-    document_path = uploadedPath;
-  } else if (removeFile) {
-    document_name = null;
-    document_path = null;
-  }
+  // Berkas diganti atau dihapus: pratinjau lama tidak berlaku lagi
+  if (newFile || removeFile) thumbnail_path = null;
 
   try {
-    const { id, ...fields } = { ...input, document_name, document_path };
+    if (newFile) {
+      const path = `${input.id}/${safeFileName(newFile.name)}`;
+      const { error } = await supabase.storage
+        .from(DOCUMENT_BUCKET)
+        .upload(path, newFile, {
+          upsert: true,
+          cacheControl: "3600",
+          contentType: newFile.type || undefined,
+        });
+      if (error) fail("Gagal mengunggah berkas", error);
+      uploadedPath = path;
+      document_name = newFile.name;
+      document_path = path;
+    } else if (removeFile) {
+      document_name = null;
+      document_path = null;
+    }
+
+    if (newPreview) {
+      const path = `${input.id}/preview-${Date.now()}.jpg`;
+      const { error } = await supabase.storage
+        .from(DOCUMENT_BUCKET)
+        .upload(path, newPreview, {
+          cacheControl: "31536000",
+          contentType: "image/jpeg",
+        });
+      if (error) {
+        fail("Gagal mengunggah pratinjau (apakah migrasi pratinjau sudah dijalankan?)", error);
+      }
+      uploadedThumb = path;
+      thumbnail_path = path;
+    }
+
+    const { id, ...fields } = {
+      ...input,
+      document_name,
+      document_path,
+      thumbnail_path,
+    };
 
     if (previous) {
       const { data, error } = await supabase
@@ -251,11 +292,15 @@ export async function saveTask(args: {
       if (error) fail("Gagal menyimpan tugas", error);
     }
   } catch (err) {
-    if (uploadedPath && uploadedPath !== oldPath) {
-      await removeFiles([uploadedPath]);
-    }
+    const orphans: string[] = [];
+    if (uploadedPath && uploadedPath !== oldPath) orphans.push(uploadedPath);
+    if (uploadedThumb) orphans.push(uploadedThumb);
+    await removeFiles(orphans);
     throw err;
   }
 
-  if (oldPath && oldPath !== document_path) await removeFiles([oldPath]);
+  const stale: string[] = [];
+  if (oldPath && oldPath !== document_path) stale.push(oldPath);
+  if (oldThumb && oldThumb !== thumbnail_path) stale.push(oldThumb);
+  await removeFiles(stale);
 }

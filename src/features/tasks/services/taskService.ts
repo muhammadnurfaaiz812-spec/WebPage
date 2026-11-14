@@ -1,4 +1,3 @@
-
 import { supabase } from "@/lib/supabase/client";
 import type { Task } from "@/features/tasks/types/task";
 
@@ -14,8 +13,10 @@ export async function getPublishedTasks(): Promise<Task[]> {
       academic_year,
       deadline,
       status,
+      work_type,
       document_name,
       document_path,
+      thumbnail_path,
       created_at,
       courses (
         name
@@ -29,5 +30,5 @@ export async function getPublishedTasks(): Promise<Task[]> {
         throw new Error("Tidak dapat mengambil data tugas.");
     }
 
-    return data as unknown as Task[];
+    return (data ?? []) as Task[];
 }
