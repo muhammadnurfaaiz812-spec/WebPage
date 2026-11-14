@@ -12,7 +12,7 @@ import {
 // Halaman ini tidak memakai hook, jadi tidak perlu "use client".
 // TaskForm sendiri sudah komponen klien.
 export const metadata: Metadata = {
-  title: "Tugas baru | Panel Admin",
+  title: { absolute: "Tugas baru | Panel Admin" },
 };
 
 export default function NewTaskPage() {
