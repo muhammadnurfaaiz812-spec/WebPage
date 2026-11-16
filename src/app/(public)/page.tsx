@@ -1,5 +1,7 @@
 "use client";
 
+/* Simpan sebagai src/app/(public)/page.tsx */
+
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -36,6 +38,8 @@ import { WORK_TYPE_LABEL, type WorkType } from "@/features/tasks/types/task";
      Berkas non-PDF, tugas tanpa berkas, atau gambar yang gagal dimuat
      memakai sampul pengganti (ikon sesuai jenis berkas), jadi setiap
      kartu selalu punya area gambar dan tingginya seragam.
+   - Batas pengumpulan dari kolom deadline, waktu dipublikasikan dari
+     kolom created_at (ditampilkan dalam WIB).
    Field bertanda "opsional" boleh dihapus; UI akan menyesuaikan.
    ──────────────────────────────────────────────────────────── */
 
@@ -51,6 +55,7 @@ type Task = {
   course: string;
   semester: string;
   deadline: string; // format ISO: YYYY-MM-DD
+  createdAt: string; // timestamp ISO dari kolom created_at (waktu dipublikasikan)
   description: string;
   workType: WorkType; // dari kolom work_type
   status: Status;
@@ -98,6 +103,32 @@ function formatDate(iso: string) {
     year: "numeric",
     timeZone: "UTC",
   });
+}
+
+/** "15 Nov 2026, 14.30 WIB". Zona waktu dikunci supaya sama di server dan browser. */
+function formatDateTime(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const date = d.toLocaleDateString("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  });
+  const time = d.toLocaleTimeString("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Jakarta",
+  });
+  return `${date}, ${time} WIB`;
+}
+
+/** Selisih hari dari hari ini ke tanggal ISO (negatif = sudah lewat). */
+function daysUntil(iso: string) {
+  const now = new Date();
+  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((new Date(iso).getTime() - today) / 86_400_000);
 }
 
 /* ────────────────────────────────────────────────────────────
@@ -242,7 +273,8 @@ function Reveal({
    Aturan:
    - Brand  : emerald. Isi solid 700 (hover 800). Tint 50 dengan teks 800.
               Teks brand di atas putih memakai 700. Fokus memakai 500.
-   - Aksen  : amber-300, hanya di atas latar hijau tua (banner).
+   - Aksen  : amber-300, hanya di atas latar hijau tua (banner). Tint amber-50
+              dipakai untuk status "Dikerjakan" dan tenggat dalam 3 hari.
    - Netral : slate, satu keluarga, dengan tiga tingkat teks:
               judul 900 / 50, isi dan meta 600 / 300-400, ikon 400-500.
               Halaman 50 / 950, permukaan putih / 900, batas 200 / 800,
@@ -535,17 +567,48 @@ function CoverPlaceholder({ fileType }: { fileType?: string }) {
   );
 }
 
+/** Sisa waktu menuju batas pengumpulan. Kuning hanya untuk tenggat dalam
+    3 hari, abu-abu kalau sudah lewat, selain itu warna brand. */
+function DeadlineHint({ deadline }: { deadline: string }) {
+  const diff = daysUntil(deadline);
+  const label =
+    diff > 1
+      ? `${diff} hari lagi`
+      : diff === 1
+        ? "Besok"
+        : diff === 0
+          ? "Hari ini"
+          : "Sudah lewat";
+  const tone =
+    diff < 0
+      ? STATUS_STYLE.Selesai.className
+      : diff <= 3
+        ? STATUS_STYLE.Dikerjakan.className
+        : brandTint;
+
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${tone}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 /*
   Susunan kartu, dari atas ke bawah:
   0. Sampul 16:9, selalu ada supaya semua kartu seragam:
      - pratinjau halaman 1 berkas PDF (bagian atas) kalau ada dan berhasil dimuat
      - selain itu sampul pengganti dengan ikon sesuai jenis berkas
-  1. Mata kuliah (+ status bila bukan bawaan) di kiri, tanggal di kanan
+  1. Mata kuliah (+ status bila bukan bawaan)
   2. Judul (maks. 3 baris) dan deskripsi (maks. 3 baris)
-  3. Chip metadata, selalu menempel di bawah isi:
+  3. Kotak waktu, dua baris berlabel:
+     - Batas pengumpulan (+ sisa waktu)
+     - Dipublikasikan (tanggal dan jam, WIB)
+  4. Chip metadata, selalu menempel di bawah isi:
      - jenis berkas, hanya kalau berkas diunggah (kolom document_*)
      - jenis tugas Individu / Kelompok (kolom work_type)
-  4. Bilah aksi terpisah garis: Lihat Detail (utama) dan Unduh.
+  5. Bilah aksi terpisah garis: Lihat Detail (utama) dan Unduh.
      Unduh hanya aktif kalau tugas punya berkas.
   Bilah aksi selalu sejajar antar-kartu walau panjang judul berbeda.
 */
@@ -602,7 +665,7 @@ function TaskCard({ task }: { task: Task }) {
       </Link>
 
       <div className="flex flex-1 flex-col p-4 sm:p-5">
-        {/* Mata kuliah, status (hanya jika bukan bawaan), tanggal */}
+        {/* Mata kuliah dan status (hanya jika bukan bawaan) */}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
           <span
             className={`rounded-md px-2.5 py-1 text-xs font-semibold ${brandTint}`}
@@ -615,23 +678,6 @@ function TaskCard({ task }: { task: Task }) {
             >
               <Icon name={status.icon} className="h-3 w-3" />
               {task.status}
-            </span>
-          )}
-          {task.deadline ? (
-            <time
-              dateTime={task.deadline}
-              title="Batas pengumpulan"
-              className={`ml-auto inline-flex items-center gap-1.5 text-xs font-medium tabular-nums ${textMuted}`}
-            >
-              <Icon
-                name="calendar"
-                className="h-3.5 w-3.5 text-slate-500 dark:text-slate-500"
-              />
-              {formatDate(task.deadline)}
-            </time>
-          ) : (
-            <span className={`ml-auto text-xs ${textMuted}`}>
-              Deadline belum ditentukan
             </span>
           )}
         </div>
@@ -647,6 +693,52 @@ function TaskCard({ task }: { task: Task }) {
         <p className={`mt-2 line-clamp-3 text-sm leading-6 ${textMuted}`}>
           {task.description}
         </p>
+
+        {/* Batas pengumpulan dan waktu dipublikasikan, dengan label */}
+        <dl className="mt-4 divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/70 text-xs dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-950/40">
+          <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+            <dt
+              className={`inline-flex shrink-0 items-center gap-1.5 font-medium ${textMuted}`}
+            >
+              <Icon name="calendar" className="h-3.5 w-3.5 text-slate-500" />
+              Batas pengumpulan
+            </dt>
+            <dd className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 text-right">
+              {task.deadline ? (
+                <>
+                  <time
+                    dateTime={task.deadline}
+                    className="font-semibold tabular-nums text-slate-800 dark:text-slate-100"
+                  >
+                    {formatDate(task.deadline)}
+                  </time>
+                  <DeadlineHint deadline={task.deadline} />
+                </>
+              ) : (
+                <span className={textMuted}>Belum ditentukan</span>
+              )}
+            </dd>
+          </div>
+
+          {task.createdAt && (
+            <div className="flex items-center justify-between gap-3 px-3 py-2.5">
+              <dt
+                className={`inline-flex shrink-0 items-center gap-1.5 font-medium ${textMuted}`}
+              >
+                <Icon name="clock" className="h-3.5 w-3.5 text-slate-500" />
+                Dipublikasikan
+              </dt>
+              <dd>
+                <time
+                  dateTime={task.createdAt}
+                  className="font-medium tabular-nums text-slate-700 dark:text-slate-300"
+                >
+                  {formatDateTime(task.createdAt)}
+                </time>
+              </dd>
+            </div>
+          )}
+        </dl>
 
         {/* Metadata */}
         <div className="mt-auto flex flex-wrap gap-2 pt-4">
@@ -717,12 +809,12 @@ function TaskSkeleton() {
       <div className="p-4 sm:p-5">
         <div className="flex gap-2">
           <div className="h-6 w-28 rounded-md bg-slate-200 dark:bg-slate-700" />
-          <div className="ml-auto h-5 w-24 rounded bg-slate-100 dark:bg-slate-800" />
         </div>
         <div className="mt-5 h-5 w-3/4 rounded bg-slate-200 dark:bg-slate-700" />
         <div className="mt-3 h-3.5 w-full rounded bg-slate-100 dark:bg-slate-800" />
         <div className="mt-2 h-3.5 w-2/3 rounded bg-slate-100 dark:bg-slate-800" />
-        <div className="mt-5 flex gap-2">
+        <div className="mt-4 h-[5.25rem] w-full rounded-xl bg-slate-100 dark:bg-slate-800" />
+        <div className="mt-4 flex gap-2">
           <div className="h-7 w-20 rounded-lg bg-slate-100 dark:bg-slate-800" />
           <div className="h-7 w-20 rounded-lg bg-slate-100 dark:bg-slate-800" />
         </div>
@@ -789,6 +881,7 @@ export default function Home() {
           course: item.courses?.name ?? "Mata Kuliah",
           semester: `Semester ${item.semester}`,
           deadline: item.deadline ?? "",
+          createdAt: item.created_at,
           description: item.description ?? "",
           workType: item.work_type === "group" ? "group" : "individual",
           status: DEFAULT_STATUS,
