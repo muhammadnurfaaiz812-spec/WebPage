@@ -6,19 +6,20 @@ import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  Suspense,
   useEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  Suspense,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { supabase } from "@/lib/supabase/client";
 import { useTasks } from "@/features/tasks/hooks/useTasks";
-import type { Task } from "@/features/tasks/types/task";
+import { getFileExtension } from "@/features/tasks/lib/documents";
+import { WORK_TYPE_LABEL, type Task } from "@/features/tasks/types/task";
 
 /* ────────────────────────────────────────────────────────────
    KONFIGURASI
@@ -27,8 +28,9 @@ import type { Task } from "@/features/tasks/types/task";
 const OWNER = "Muhammad Nur Faaiz";
 const ACADEMIC_LABEL = "TA 2026/2027 · Semester 3 (Ganjil)";
 
-// Padding horizontal saja. Dipakai sendiri oleh Notice (yang punya max-w sendiri).
-const GUTTER = "px-4 sm:px-6 lg:px-10";
+// Padding horizontal saja (sama dengan beranda). Dipakai sendiri oleh Notice,
+// yang punya max-w sendiri.
+const GUTTER = "px-4 sm:px-6 lg:px-8";
 
 // Lebar konten halaman. SAMAKAN max-w-7xl dengan container di beranda.
 // Jangan digabung dengan kelas max-w lain pada elemen yang sama.
@@ -52,6 +54,19 @@ function formatDate(iso: string, timeZone = "UTC") {
     year: "numeric",
     timeZone,
   });
+}
+
+/** "15 November 2026, 14.30 WIB". Zona waktu dikunci supaya sama di server dan browser. */
+function formatDateTime(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const time = d.toLocaleTimeString("id-ID", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Jakarta",
+  });
+  return `${formatDate(iso, "Asia/Jakarta")}, ${time} WIB`;
 }
 
 /** Pecahan tanggal untuk panel batas pengumpulan: hari, tanggal, bulan + tahun. */
@@ -171,6 +186,7 @@ function Reveal({
    - Aksen  : amber-300, hanya di atas banner hijau tua dan hanya
               untuk tenggat dekat.
    - Netral : slate. Halaman 50 / 950, permukaan putih / 900.
+              Teks meta 600 / 400 (sama dengan beranda).
    - Merah  : hanya untuk pesan error.
    - TOMBOL  = rounded-xl, ada batas + bayangan tipis, berubah saat hover.
    - LENCANA = pil (rounded-full), datar, tidak bisa diklik.
@@ -183,7 +199,7 @@ const dashedBox =
   "rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center dark:border-slate-700 dark:bg-slate-900";
 
 const textHeading = "text-slate-900 dark:text-slate-50";
-const textMuted = "text-slate-500 dark:text-slate-400";
+const textMuted = "text-slate-600 dark:text-slate-400";
 
 const brandTint =
   "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20";
@@ -328,9 +344,9 @@ const getServerThemeSnapshot = () => false;
    ──────────────────────────────────────────────────────────── */
 
 /**
- * Header seperti beranda. Tinggi tetap (h-16): sebelumnya header mengecil
- * saat scroll, yang menggeser konten dan bisa membuat scroll bergetar.
- * Sekarang efeknya hanya bayangan dan garis progress baca.
+ * Header seperti beranda. Tinggi tetap (h-16): header yang mengecil saat
+ * scroll menggeser konten dan bisa membuat scroll bergetar. Efeknya hanya
+ * bayangan dan garis progress baca.
  */
 function SiteHeader() {
   const [scrolled, setScrolled] = useState(false);
@@ -385,7 +401,7 @@ function SiteHeader() {
         scrolled ? "shadow-md shadow-slate-900/5 dark:shadow-black/20" : ""
       }`}
     >
-      <div className={`flex h-16 items-center justify-between gap-4 ${CONTAINER}`}>
+      <div className={`flex h-16 items-center justify-between gap-3 ${CONTAINER}`}>
         <Link
           href="/"
           aria-label="Arsip Tugas, ke beranda"
@@ -397,15 +413,17 @@ function SiteHeader() {
             width={40}
             height={40}
             priority
-            className="h-10 w-10 shrink-0 object-contain"
+            className="h-9 w-9 shrink-0 object-contain sm:h-10 sm:w-10"
           />
-          <span className="flex min-w-0 flex-col leading-tight">
+          <span className="flex min-w-0 flex-col leading-none">
             <span
               className={`text-lg font-extrabold tracking-tight ${textHeading}`}
             >
               Arsip Tugas
             </span>
-            <span className={`truncate text-xs ${textMuted}`}>
+            <span
+              className={`mt-1 truncate text-[11px] font-medium sm:text-xs ${textMuted}`}
+            >
               Universitas Perjuangan Tasikmalaya
             </span>
           </span>
@@ -424,7 +442,7 @@ function SiteHeader() {
             onClick={toggleTheme}
             aria-label={themeLabel}
             title={themeLabel}
-            className={`flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 text-slate-600 transition duration-200 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 active:scale-90 dark:border-slate-700 dark:text-slate-300 dark:hover:border-emerald-500/40 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-300 ${focusRing}`}
+            className={`flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition duration-200 hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-800 active:scale-90 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:border-emerald-500/40 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-300 ${focusRing}`}
           >
             <span className="relative block h-[18px] w-[18px]">
               <Icon
@@ -712,11 +730,12 @@ function DetailSkeleton() {
 
 function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
   const courseName = task.courses?.name ?? "Mata Kuliah";
-  const fileType = task.document_name?.split(".").pop()?.toUpperCase();
   const urls = useMemo(
     () => resolveDocumentUrls(task.document_path, task.document_name),
     [task.document_path, task.document_name]
   );
+  // Sama dengan beranda: jenis berkas hanya ada kalau berkasnya ada
+  const fileType = urls ? getFileExtension(task.document_name) : undefined;
 
   // Cahaya di banner bergeser halus mengikuti kursor (hanya mouse)
   function handleHeroMove(e: ReactPointerEvent<HTMLElement>) {
@@ -934,13 +953,16 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
                 <InfoRow label="Mata kuliah">{courseName}</InfoRow>
                 <InfoRow label="Semester">{task.semester}</InfoRow>
                 <InfoRow label="Tahun ajaran">{task.academic_year}</InfoRow>
+                <InfoRow label="Jenis tugas">
+                  {WORK_TYPE_LABEL[task.work_type] ?? "Individu"}
+                </InfoRow>
                 <InfoRow label="Batas pengumpulan">
                   {task.deadline
                     ? formatDate(task.deadline)
                     : "Belum ditentukan"}
                 </InfoRow>
                 <InfoRow label="Dipublikasikan">
-                  {formatDate(task.created_at, "Asia/Jakarta")}
+                  {formatDateTime(task.created_at)}
                 </InfoRow>
               </dl>
             </section>
@@ -1002,6 +1024,9 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
    Mengambil semua tugas yang dipublikasikan lewat useTasks lalu
    memilih satu berdasarkan id di URL. Tugas draft otomatis tidak
    ditemukan, sama seperti di beranda.
+
+   useParams dibungkus Suspense (lihat TaskDetailPage di bawah) karena
+   Cache Components membutuhkannya untuk rute dinamis.
    ──────────────────────────────────────────────────────────── */
 
 function TaskDetailContent() {
@@ -1073,7 +1098,6 @@ function TaskDetailContent() {
             }
           />
         )}
-        
       </main>
 
       <footer className="w-full border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
@@ -1090,12 +1114,15 @@ function TaskDetailContent() {
 export default function TaskDetailPage() {
   return (
     <Suspense
+      // Kerangka yang sama dengan halaman asli (header + skeleton), jadi tidak
+      // ada layar kosong saat berpindah dari beranda
       fallback={
-        <div
-          role="status"
-          className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-600 dark:bg-slate-950 dark:text-slate-400"
-        >
-          Memuat tugas...
+        <div className="flex min-h-screen flex-col bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-200">
+          <style>{DETAIL_CSS}</style>
+          <SiteHeader />
+          <main className="flex-1">
+            <DetailSkeleton />
+          </main>
         </div>
       }
     >
