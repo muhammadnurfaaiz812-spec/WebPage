@@ -19,6 +19,7 @@ import {
 import { supabase } from "@/lib/supabase/client";
 import { useTasks } from "@/features/tasks/hooks/useTasks";
 import { getFileExtension } from "@/features/tasks/lib/documents";
+import PostContent from "@/features/tasks/components/PostContent";
 import { WORK_TYPE_LABEL, type Task } from "@/features/tasks/types/task";
 
 /* ────────────────────────────────────────────────────────────
@@ -390,16 +391,15 @@ function SiteHeader() {
     document.documentElement.classList.toggle("dark", next);
     try {
       localStorage.setItem("theme", next ? "dark" : "light");
-    } catch {}
+    } catch { }
   }
 
   const themeLabel = dark ? "Aktifkan tema terang" : "Aktifkan tema gelap";
 
   return (
     <header
-      className={`sticky top-0 z-50 w-full border-b border-slate-200 bg-white/85 backdrop-blur-md transition-shadow duration-300 dark:border-slate-800 dark:bg-slate-950/85 ${
-        scrolled ? "shadow-md shadow-slate-900/5 dark:shadow-black/20" : ""
-      }`}
+      className={`sticky top-0 z-50 w-full border-b border-slate-200 bg-white/85 backdrop-blur-md transition-shadow duration-300 dark:border-slate-800 dark:bg-slate-950/85 ${scrolled ? "shadow-md shadow-slate-900/5 dark:shadow-black/20" : ""
+        }`}
     >
       <div className={`flex h-16 items-center justify-between gap-3 ${CONTAINER}`}>
         <Link
@@ -447,19 +447,17 @@ function SiteHeader() {
             <span className="relative block h-[18px] w-[18px]">
               <Icon
                 name="sun"
-                className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${
-                  dark
+                className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${dark
                     ? "rotate-0 scale-100 opacity-100"
                     : "-rotate-90 scale-0 opacity-0"
-                }`}
+                  }`}
               />
               <Icon
                 name="moon"
-                className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${
-                  dark
+                className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${dark
                     ? "rotate-90 scale-0 opacity-0"
                     : "rotate-0 scale-100 opacity-100"
-                }`}
+                  }`}
               />
             </span>
           </button>
@@ -483,11 +481,10 @@ function BackLink({ onDark = false }: { onDark?: boolean }) {
     <Link
       href="/#daftar-tugas"
       aria-label="Kembali ke daftar tugas"
-      className={`group/back ${
-        onDark
+      className={`group/back ${onDark
           ? `${heroBtn} ${focusRingOnDark}`
           : `${btnShape} h-10 ${btnOutline} ${focusRing}`
-      }`}
+        }`}
     >
       <Icon
         name="arrowLeft"
@@ -521,9 +518,8 @@ function CopyLinkButton() {
     <button
       type="button"
       onClick={copy}
-      className={`${heroBtn} shrink-0 ${
-        state === "copied" ? "!border-white !bg-white !text-emerald-900" : ""
-      } ${focusRingOnDark}`}
+      className={`${heroBtn} shrink-0 ${state === "copied" ? "!border-white !bg-white !text-emerald-900" : ""
+        } ${focusRingOnDark}`}
     >
       <span key={state} className="anim-pop inline-flex">
         <Icon name={state === "copied" ? "tick" : "link"} className="h-4 w-4" />
@@ -659,23 +655,20 @@ function Notice({
       </div>
       <div
         role={isError ? "alert" : undefined}
-        className={`anim-fade-up ${
-          isError
+        className={`anim-fade-up ${isError
             ? "rounded-2xl border border-red-200 bg-red-50 px-6 py-12 text-center dark:border-red-900/50 dark:bg-red-950/20"
             : dashedBox
-        }`}
+          }`}
       >
         <h1
-          className={`text-lg font-bold ${
-            isError ? "text-red-800 dark:text-red-300" : textHeading
-          }`}
+          className={`text-lg font-bold ${isError ? "text-red-800 dark:text-red-300" : textHeading
+            }`}
         >
           {title}
         </h1>
         <p
-          className={`mt-2 text-sm ${
-            isError ? "text-red-700 dark:text-red-300/80" : textMuted
-          }`}
+          className={`mt-2 text-sm ${isError ? "text-red-700 dark:text-red-300/80" : textMuted
+            }`}
         >
           {message}
         </p>
@@ -831,28 +824,45 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
       <div
         className={`grid gap-6 py-8 sm:py-10 lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_1fr] lg:gap-x-10 lg:gap-y-8 lg:py-12 ${CONTAINER}`}
       >
-        {/* Deskripsi */}
-        <Reveal className="lg:col-start-1 lg:row-start-1">
-          <article aria-labelledby="judul-deskripsi">
-            <h2
-              id="judul-deskripsi"
-              className={`text-xl font-extrabold tracking-tight ${textHeading}`}
-            >
-              Deskripsi tugas
-            </h2>
-            <div className={`${surface} mt-3 rounded-2xl p-5 shadow-sm sm:p-6`}>
-              {task.description?.trim() ? (
-                <p className="max-w-prose whitespace-pre-line break-words text-[15px] leading-7 text-slate-600 sm:text-base sm:leading-8 dark:text-slate-300">
-                  {task.description}
-                </p>
-              ) : (
-                <p className={`text-sm ${textMuted}`}>
-                  Tugas ini belum memiliki deskripsi.
-                </p>
-              )}
-            </div>
-          </article>
-        </Reveal>
+        {/* Deskripsi + jawaban (kolom kiri). Jawaban tidak dibungkus Reveal:
+            isinya panjang, dan animasinya sendiri jalan saat tiap bagian terlihat. */}
+        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
+          <Reveal>
+            <article aria-labelledby="judul-deskripsi">
+              <h2
+                id="judul-deskripsi"
+                className={`text-xl font-extrabold tracking-tight ${textHeading}`}
+              >
+                Deskripsi tugas
+              </h2>
+              <div className={`${surface} mt-3 rounded-2xl p-5 shadow-sm sm:p-6`}>
+                {task.description?.trim() ? (
+                  <p className="max-w-prose whitespace-pre-line break-words text-[15px] leading-7 text-slate-600 sm:text-base sm:leading-8 dark:text-slate-300">
+                    {task.description}
+                  </p>
+                ) : (
+                  <p className={`text-sm ${textMuted}`}>
+                    Tugas ini belum memiliki deskripsi.
+                  </p>
+                )}
+              </div>
+            </article>
+          </Reveal>
+
+          {task.content?.trim() && (
+            <section aria-labelledby="judul-jawaban" className="mt-10">
+              <h2
+                id="judul-jawaban"
+                className={`text-xl font-extrabold tracking-tight ${textHeading}`}
+              >
+                Jawaban
+              </h2>
+              <div className={`${surface} mt-3 rounded-2xl p-5 shadow-sm sm:p-6`}>
+                <PostContent source={task.content} />
+              </div>
+            </section>
+          )}
+        </div>
 
         {/* Berkas dan informasi */}
         <Reveal
@@ -873,11 +883,10 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
 
               <div className="mt-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
                 <span
-                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${
-                    urls
+                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${urls
                       ? brandTint
                       : "bg-slate-100 text-slate-400 ring-1 ring-inset ring-slate-200 dark:bg-slate-800 dark:text-slate-500 dark:ring-slate-700"
-                  }`}
+                    }`}
                 >
                   <Icon name="file" className="h-5 w-5" />
                 </span>
@@ -1040,8 +1049,8 @@ function TaskDetailContent() {
     () =>
       task
         ? tasks
-            .filter((t) => t.id !== task.id && t.course_id === task.course_id)
-            .slice(0, 3)
+          .filter((t) => t.id !== task.id && t.course_id === task.course_id)
+          .slice(0, 3)
         : [],
     [tasks, task]
   );

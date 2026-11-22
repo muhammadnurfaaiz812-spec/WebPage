@@ -40,11 +40,12 @@ export type TaskInput = Pick<
   | "deadline"
   | "status"
   | "work_type"
+  | "content"
 >;
 
 const TASK_SELECT = `
   id, course_id, title, description, semester, academic_year, deadline,
-  status, work_type, document_name, document_path, thumbnail_path, created_at,
+  status, work_type, content, document_name, document_path, thumbnail_path, created_at,
   courses ( name )
 `;
 

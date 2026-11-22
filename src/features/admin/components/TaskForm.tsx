@@ -29,6 +29,7 @@ import {
   type Course,
 } from "@/features/admin/services/adminService";
 import { renderFilePreview } from "@/features/admin/lib/filePreview";
+import PostContent from "@/features/tasks/components/PostContent";
 import {
   getDocumentUrls,
   getFileExtension,
@@ -117,19 +118,19 @@ const STATUS_OPTIONS: {
   hint: string;
   icon: IconName;
 }[] = [
-  {
-    value: "draft",
-    label: "Draft",
-    hint: "Hanya terlihat olehmu. Tidak tampil di situs.",
-    icon: "eyeOff",
-  },
-  {
-    value: "published",
-    label: "Dipublikasikan",
-    hint: "Tampil di beranda dan bisa dibuka siapa saja.",
-    icon: "globe",
-  },
-];
+    {
+      value: "draft",
+      label: "Draft",
+      hint: "Hanya terlihat olehmu. Tidak tampil di situs.",
+      icon: "eyeOff",
+    },
+    {
+      value: "published",
+      label: "Dipublikasikan",
+      hint: "Tampil di beranda dan bisa dibuka siapa saja.",
+      icon: "globe",
+    },
+  ];
 
 // Kolom wajib: id elemen, nama untuk pesan, dan urutan fokus saat validasi gagal
 type FieldKey = "title" | "course" | "semester" | "year";
@@ -506,6 +507,10 @@ function FileCard({
    FORM
    ──────────────────────────────────────────────────────────── */
 
+// Kerangka siap pakai untuk soal Disk Scheduling; admin tinggal mengganti angkanya
+const DISK_TEMPLATE =
+  "## Soal\n\nTulis soal di sini.\n\n## Jawaban\n\n```disk\nhead: 50\ntrack: 200\nantrean: 52, 170, 83, 170, 24, 16, 190, 6, 67, 83, 152, 24, 71, 111, 83, 123\narah: naik\nlompatan: hitung\nscan: ujung\n```\n";
+
 export default function TaskForm({ task }: { task?: Task }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
@@ -518,6 +523,8 @@ export default function TaskForm({ task }: { task?: Task }) {
   const [title, setTitle] = useState(task?.title ?? "");
   const [courseId, setCourseId] = useState(task?.course_id ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
+  const [content, setContent] = useState(task?.content ?? "");
+  const [contentPreview, setContentPreview] = useState(false);
   const [semester, setSemester] = useState(task ? String(task.semester) : "");
   const [academicYear, setAcademicYear] = useState(
     task?.academic_year ?? defaultAcademicYear()
@@ -534,6 +541,7 @@ export default function TaskForm({ task }: { task?: Task }) {
     title: task?.title ?? "",
     courseId: task?.course_id ?? "",
     description: task?.description ?? "",
+    content: task?.content ?? "",
     semester: task ? String(task.semester) : "",
     academicYear: task?.academic_year ?? defaultAcademicYear(),
     deadline: task?.deadline ?? "",
@@ -627,6 +635,7 @@ export default function TaskForm({ task }: { task?: Task }) {
     title !== initial.title ||
     courseId !== initial.courseId ||
     description !== initial.description ||
+    content !== initial.content ||
     semester !== initial.semester ||
     academicYear !== initial.academicYear ||
     deadline !== initial.deadline ||
@@ -887,6 +896,7 @@ export default function TaskForm({ task }: { task?: Task }) {
           course_id: courseId,
           title: trimmedTitle,
           description: description.trim() || null,
+          content: content.trim() || null,
           semester: semesterNumber,
           academic_year: year,
           deadline: deadline || null,
@@ -945,16 +955,14 @@ export default function TaskForm({ task }: { task?: Task }) {
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
-      className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition duration-200 active:scale-[0.995] peer-focus-visible:ring-4 peer-focus-visible:ring-emerald-500/30 ${
-        dragging
+      className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition duration-200 active:scale-[0.995] peer-focus-visible:ring-4 peer-focus-visible:ring-emerald-500/30 ${dragging
           ? "border-emerald-500 bg-emerald-50 dark:border-emerald-400 dark:bg-emerald-500/10"
           : "border-slate-300 bg-slate-50 hover:border-emerald-300 hover:bg-emerald-50/60 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-emerald-500/40 dark:hover:bg-emerald-500/5"
-      }`}
+        }`}
     >
       <span
-        className={`flex h-11 w-11 items-center justify-center rounded-xl bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-100 transition-transform duration-200 dark:bg-slate-900 dark:text-emerald-300 dark:ring-emerald-500/20 ${
-          dragging ? "-translate-y-1 scale-110" : ""
-        }`}
+        className={`flex h-11 w-11 items-center justify-center rounded-xl bg-white text-emerald-700 shadow-sm ring-1 ring-emerald-100 transition-transform duration-200 dark:bg-slate-900 dark:text-emerald-300 dark:ring-emerald-500/20 ${dragging ? "-translate-y-1 scale-110" : ""
+          }`}
       >
         <Icon name="upload" size="h-5 w-5" />
       </span>
@@ -1137,6 +1145,74 @@ export default function TaskForm({ task }: { task?: Task }) {
                   aria-describedby="deskripsi-hint"
                   className={`${fieldMultiline} resize-y`}
                 />
+              </Field>
+
+              <Field
+                id="isi-posting"
+                label="Isi posting (opsional)"
+                hint={
+                  <>
+                    Mendukung Markdown: judul <code>##</code>, tabel, daftar, dan gambar.
+                    Blok <code>```disk</code> membuat tabel dan grafik Disk Scheduling
+                    otomatis dari data soal.
+                  </>
+                }
+              >
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div
+                    role="group"
+                    aria-label="Mode isi posting"
+                    className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800"
+                  >
+                    {([false, true] as const).map((preview) => (
+                      <button
+                        key={String(preview)}
+                        type="button"
+                        aria-pressed={contentPreview === preview}
+                        onClick={() => setContentPreview(preview)}
+                        className={`rounded-md px-3 py-1 text-xs font-semibold transition ${contentPreview === preview
+                            ? "bg-white text-emerald-800 shadow-sm dark:bg-slate-900 dark:text-emerald-300"
+                            : "text-slate-600 hover:text-emerald-800 dark:text-slate-400 dark:hover:text-emerald-300"
+                          }`}
+                      >
+                        {preview ? "Pratinjau" : "Tulis"}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setContent(
+                        (prev) => (prev.trim() ? prev.trimEnd() + "\n\n" : "") + DISK_TEMPLATE
+                      )
+                    }
+                    className={`${btnSecondary} !h-9 !px-3 text-xs`}
+                  >
+                    Sisipkan template Disk Scheduling
+                  </button>
+                </div>
+
+                {contentPreview ? (
+                  <div className="min-h-[10rem] rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+                    {content.trim() ? (
+                      <PostContent source={content} />
+                    ) : (
+                      <p className="text-sm text-slate-600 dark:text-slate-400">
+                        Belum ada isi untuk dipratinjau.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <textarea
+                    id="isi-posting"
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    rows={14}
+                    spellCheck={false}
+                    aria-describedby="isi-posting-hint"
+                    className={`${fieldMultiline} resize-y font-mono text-[13px]`}
+                  />
+                )}
               </Field>
             </div>
           </Section>
@@ -1394,9 +1470,8 @@ export default function TaskForm({ task }: { task?: Task }) {
                         <span className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-50">
                           <span
                             key={String(status === option.value)}
-                            className={`inline-flex ${
-                              status === option.value ? "anim-pop" : ""
-                            }`}
+                            className={`inline-flex ${status === option.value ? "anim-pop" : ""
+                              }`}
                           >
                             <Icon
                               name={option.icon}

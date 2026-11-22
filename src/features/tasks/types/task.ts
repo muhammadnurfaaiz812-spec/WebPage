@@ -18,6 +18,7 @@ export interface Task {
     deadline: string | null;
     status: TaskStatus;
     work_type: WorkType;
+    content: string | null;
     document_name: string | null;
     document_path: string | null;
     thumbnail_path: string | null;

@@ -14,6 +14,7 @@ export async function getPublishedTasks(): Promise<Task[]> {
       deadline,
       status,
       work_type,
+      content,
       document_name,
       document_path,
       thumbnail_path,
