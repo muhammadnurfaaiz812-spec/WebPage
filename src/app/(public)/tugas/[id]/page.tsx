@@ -89,6 +89,15 @@ function daysUntil(iso: string) {
   return Math.round((new Date(iso).getTime() - today) / 86_400_000);
 }
 
+/** Nama situs dari sebuah tautan, mis. "namaweb.vercel.app". */
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 /** Tautan lihat dan unduh untuk berkas tugas. Null kalau belum ada berkas. */
 function resolveDocumentUrls(path: string | null, name: string | null) {
   if (!path) return null;
@@ -248,6 +257,7 @@ const heroGradient =
 const ICONS = {
   arrowLeft: <path d="M19 12H5M12 19l-7-7 7-7" />,
   chevronRight: <path d="m9 18 6-6-6-6" />,
+  chevronUp: <path d="m18 15-6-6-6 6" />,
   calendar: (
     <>
       <rect x="3" y="4" width="18" height="18" rx="2" />
@@ -472,6 +482,59 @@ function SiteHeader() {
         style={{ transform: "scaleX(0)" }}
       />
     </header>
+  );
+}
+
+/**
+ * Tombol bulat hijau di pojok kanan bawah. Muncul setelah halaman digulir
+ * cukup jauh, dan kalau diklik menggulir kembali ke atas. Gulir halus kecuali
+ * perangkat memakai "reduce motion". Saat tersembunyi, tombol keluar dari
+ * urutan Tab dan dari pembaca layar.
+ */
+function BackToTop() {
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    let frame = 0;
+
+    const update = () => {
+      frame = 0;
+      setVisible(window.scrollY > 480);
+    };
+
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", onScroll);
+    };
+  }, []);
+
+  function toTop() {
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)"
+    ).matches;
+    window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toTop}
+      aria-label="Kembali ke atas"
+      aria-hidden={!visible}
+      tabIndex={visible ? 0 : -1}
+      className={`fixed bottom-5 right-4 z-40 flex h-11 w-11 items-center justify-center rounded-full bg-emerald-700 text-white shadow-lg shadow-emerald-900/25 transition-all duration-300 hover:-translate-y-1 hover:bg-emerald-800 active:scale-90 motion-reduce:transition-none sm:bottom-6 sm:right-6 ${focusRing} ${visible
+          ? "translate-y-0 opacity-100"
+          : "pointer-events-none translate-y-4 opacity-0"
+        }`}
+    >
+      <Icon name="chevronUp" className="h-5 w-5" />
+    </button>
   );
 }
 
@@ -730,6 +793,39 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
   // Sama dengan beranda: jenis berkas hanya ada kalau berkasnya ada
   const fileType = urls ? getFileExtension(task.document_name) : undefined;
 
+  // Tautan luar (opsional)
+  const linkUrl = task.link_url?.trim() || null;
+  const linkHost = linkUrl ? hostOf(linkUrl) : "";
+
+  // Deskripsi dan isi posting yang disembunyikan admin, atau kosong, tidak
+  // ditampilkan sama sekali (tanpa judul bagian dan tanpa kotak kosong).
+  // getPublishedTasks sudah mengosongkannya; pemeriksaan ini jaga-jaga kalau
+  // datanya datang dari query lain. "!== false" supaya data tanpa kolom
+  // show_* tetap tampil seperti sebelumnya.
+  const description =
+    task.show_description !== false ? task.description?.trim() || null : null;
+  const content =
+    task.show_content !== false ? task.content?.trim() || null : null;
+
+  // Tata letak menyesuaikan isi: kolom kiri hanya ada kalau ada sesuatu di sana
+  const hasBody = Boolean(description || content);
+  const hasLeft = hasBody || related.length > 0;
+  // Kartu berkas selalu ada kecuali tugas hanya punya tautan
+  const showFileCard = Boolean(urls) || !linkUrl;
+
+  const gridClass = hasLeft
+    ? `lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-x-10 lg:gap-y-8 ${hasBody ? "lg:grid-rows-[auto_1fr]" : ""
+    }`
+    : "lg:grid-cols-[minmax(0,44rem)]";
+  const asideClass = !hasLeft
+    ? ""
+    : hasBody
+      ? "lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
+      : "lg:sticky lg:top-24 lg:col-start-2 lg:row-start-1 lg:self-start";
+  const relatedClass = hasBody
+    ? "lg:col-start-1 lg:row-start-2"
+    : "lg:col-start-1 lg:row-start-1";
+
   // Cahaya di banner bergeser halus mengikuti kursor (hanya mouse)
   function handleHeroMove(e: ReactPointerEvent<HTMLElement>) {
     if (e.pointerType !== "mouse") return;
@@ -819,134 +915,188 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
       </div>
 
       {/* ───── ISI ─────
-          Desktop: kiri deskripsi + tugas lain, kanan berkas + informasi
-          (menempel saat scroll). Mobile: satu kolom berurutan. */}
-      <div
-        className={`grid gap-6 py-8 sm:py-10 lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_1fr] lg:gap-x-10 lg:gap-y-8 lg:py-12 ${CONTAINER}`}
-      >
+          Desktop: kiri deskripsi + jawaban + tugas lain, kanan berkas,
+          tautan, dan informasi (menempel saat scroll). Mobile: satu kolom
+          berurutan. Bagian yang kosong tidak digambar; kalau kolom kiri
+          kosong seluruhnya, kolom kanan menjadi satu-satunya kolom. */}
+      <div className={`grid gap-6 py-8 sm:py-10 lg:py-12 ${gridClass} ${CONTAINER}`}>
         {/* Deskripsi + jawaban (kolom kiri). Jawaban tidak dibungkus Reveal:
             isinya panjang, dan animasinya sendiri jalan saat tiap bagian terlihat. */}
-        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
-          <Reveal>
-            <article aria-labelledby="judul-deskripsi">
-              <h2
-                id="judul-deskripsi"
-                className={`text-xl font-extrabold tracking-tight ${textHeading}`}
-              >
-                Deskripsi tugas
-              </h2>
-              <div className={`${surface} mt-3 rounded-2xl p-5 shadow-sm sm:p-6`}>
-                {task.description?.trim() ? (
-                  <p className="max-w-prose whitespace-pre-line break-words text-[15px] leading-7 text-slate-600 sm:text-base sm:leading-8 dark:text-slate-300">
-                    {task.description}
-                  </p>
-                ) : (
-                  <p className={`text-sm ${textMuted}`}>
-                    Tugas ini belum memiliki deskripsi.
-                  </p>
-                )}
-              </div>
-            </article>
-          </Reveal>
-
-          {task.content?.trim() && (
-            <section aria-labelledby="judul-jawaban" className="mt-10">
-              <h2
-                id="judul-jawaban"
-                className={`text-xl font-extrabold tracking-tight ${textHeading}`}
-              >
-                Jawaban
-              </h2>
-              <div className={`${surface} mt-3 rounded-2xl p-5 shadow-sm sm:p-6`}>
-                <PostContent source={task.content} />
-              </div>
-            </section>
-          )}
-        </div>
-
-        {/* Berkas dan informasi */}
-        <Reveal
-          delayMs={80}
-          className="lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
-        >
-          <aside className="space-y-6">
-            <section
-              aria-labelledby="judul-berkas"
-              className={`${surface} rounded-2xl p-5 shadow-sm`}
-            >
-              <h2
-                id="judul-berkas"
-                className={`text-base font-bold ${textHeading}`}
-              >
-                Berkas tugas
-              </h2>
-
-              <div className="mt-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
-                <span
-                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${urls
-                      ? brandTint
-                      : "bg-slate-100 text-slate-400 ring-1 ring-inset ring-slate-200 dark:bg-slate-800 dark:text-slate-500 dark:ring-slate-700"
-                    }`}
-                >
-                  <Icon name="file" className="h-5 w-5" />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold leading-snug text-slate-800 [overflow-wrap:anywhere] dark:text-slate-100">
-                    {urls
-                      ? (task.document_name ?? "Dokumen tugas")
-                      : "Belum ada berkas"}
-                  </p>
-                  <p className={`mt-0.5 text-xs ${textMuted}`}>
-                    {urls
-                      ? fileType
-                        ? `Berkas ${fileType}`
-                        : "Dokumen"
-                      : "Berkas belum diunggah"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 flex flex-col gap-2.5">
-                {urls ? (
-                  <>
-                    <a
-                      href={urls.download}
-                      download={task.document_name ?? undefined}
-                      className={`group/btn h-11 ${btnShape} ${btnPrimary} ${focusRing}`}
-                    >
-                      <Icon
-                        name="download"
-                        className="h-4 w-4 transition-transform duration-200 group-hover/btn:translate-y-0.5"
-                      />
-                      Unduh berkas
-                    </a>
-                    <a
-                      href={urls.view}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`group/btn h-11 ${btnShape} ${btnOutline} ${focusRing}`}
-                    >
-                      <Icon
-                        name="external"
-                        className="h-4 w-4 transition-transform duration-200 group-hover/btn:-translate-y-0.5 group-hover/btn:translate-x-0.5"
-                      />
-                      Buka di tab baru
-                      <span className="sr-only"> (tab baru)</span>
-                    </a>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    disabled
-                    title="Berkas belum tersedia"
-                    className={`h-11 ${btnShape} ${btnDisabled}`}
+        {hasBody && (
+          <div className="min-w-0 lg:col-start-1 lg:row-start-1">
+            {description && (
+              <Reveal>
+                <article aria-labelledby="judul-deskripsi">
+                  <h2
+                    id="judul-deskripsi"
+                    className={`text-xl font-extrabold tracking-tight ${textHeading}`}
                   >
-                    <Icon name="download" />
-                    Unduh berkas
-                  </button>
-                )}
-              </div>
-            </section>
+                    Deskripsi tugas
+                  </h2>
+                  <div
+                    className={`${surface} mt-3 rounded-2xl p-5 shadow-sm sm:p-6`}
+                  >
+                    <p className="max-w-prose whitespace-pre-line break-words text-[15px] leading-7 text-slate-600 sm:text-base sm:leading-8 dark:text-slate-300">
+                      {description}
+                    </p>
+                  </div>
+                </article>
+              </Reveal>
+            )}
+
+            {content && (
+              <section
+                aria-labelledby="judul-jawaban"
+                className={description ? "mt-10" : ""}
+              >
+                <h2
+                  id="judul-jawaban"
+                  className={`text-xl font-extrabold tracking-tight ${textHeading}`}
+                >
+                  Jawaban
+                </h2>
+                <div
+                  className={`${surface} mt-3 rounded-2xl p-5 shadow-sm sm:p-6`}
+                >
+                  <PostContent source={content} />
+                </div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {/* Berkas, tautan, dan informasi */}
+        <Reveal delayMs={80} className={asideClass}>
+          <aside className="space-y-6">
+            {showFileCard && (
+              <section
+                aria-labelledby="judul-berkas"
+                className={`${surface} rounded-2xl p-5 shadow-sm`}
+              >
+                <h2
+                  id="judul-berkas"
+                  className={`text-base font-bold ${textHeading}`}
+                >
+                  Berkas tugas
+                </h2>
+
+                <div className="mt-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+                  <span
+                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${urls
+                        ? brandTint
+                        : "bg-slate-100 text-slate-400 ring-1 ring-inset ring-slate-200 dark:bg-slate-800 dark:text-slate-500 dark:ring-slate-700"
+                      }`}
+                  >
+                    <Icon name="file" className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold leading-snug text-slate-800 [overflow-wrap:anywhere] dark:text-slate-100">
+                      {urls
+                        ? (task.document_name ?? "Dokumen tugas")
+                        : "Belum ada berkas"}
+                    </p>
+                    <p className={`mt-0.5 text-xs ${textMuted}`}>
+                      {urls
+                        ? fileType
+                          ? `Berkas ${fileType}`
+                          : "Dokumen"
+                        : "Berkas belum diunggah"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-col gap-2.5">
+                  {urls ? (
+                    <>
+                      <a
+                        href={urls.download}
+                        download={task.document_name ?? undefined}
+                        className={`group/btn h-11 ${btnShape} ${btnPrimary} ${focusRing}`}
+                      >
+                        <Icon
+                          name="download"
+                          className="h-4 w-4 transition-transform duration-200 group-hover/btn:translate-y-0.5"
+                        />
+                        Unduh berkas
+                      </a>
+                      <a
+                        href={urls.view}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={`group/btn h-11 ${btnShape} ${btnOutline} ${focusRing}`}
+                      >
+                        <Icon
+                          name="external"
+                          className="h-4 w-4 transition-transform duration-200 group-hover/btn:-translate-y-0.5 group-hover/btn:translate-x-0.5"
+                        />
+                        Buka di tab baru
+                        <span className="sr-only"> (tab baru)</span>
+                      </a>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled
+                      title="Berkas belum tersedia"
+                      className={`h-11 ${btnShape} ${btnDisabled}`}
+                    >
+                      <Icon name="download" />
+                      Unduh berkas
+                    </button>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {linkUrl && (
+              <section
+                aria-labelledby="judul-tautan"
+                className={`${surface} rounded-2xl p-5 shadow-sm`}
+              >
+                <h2
+                  id="judul-tautan"
+                  className={`text-base font-bold ${textHeading}`}
+                >
+                  Tautan tugas
+                </h2>
+
+                <div className="mt-4 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/60">
+                  <span
+                    className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-lg ${brandTint}`}
+                  >
+                    <Icon name="link" className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0">
+                    <p
+                      title={linkUrl}
+                      className="text-sm font-semibold leading-snug text-slate-800 [overflow-wrap:anywhere] dark:text-slate-100"
+                    >
+                      {linkHost}
+                    </p>
+                    <p className={`mt-0.5 text-xs ${textMuted}`}>
+                      Situs luar, dibuka di tab baru
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <a
+                    href={linkUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`group/btn h-11 w-full ${btnShape} ${urls ? btnOutline : btnPrimary
+                      } ${focusRing}`}
+                  >
+                    <Icon
+                      name="external"
+                      className="h-4 w-4 transition-transform duration-200 group-hover/btn:-translate-y-0.5 group-hover/btn:translate-x-0.5"
+                    />
+                    Buka tautan
+                    <span className="sr-only"> (tab baru)</span>
+                  </a>
+                </div>
+              </section>
+            )}
 
             <section
               aria-labelledby="judul-info"
@@ -980,7 +1130,7 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
 
         {/* Tugas lain dari mata kuliah yang sama */}
         {related.length > 0 && (
-          <Reveal delayMs={160} className="lg:col-start-1 lg:row-start-2">
+          <Reveal delayMs={160} className={relatedClass}>
             <section aria-labelledby="judul-terkait">
               <h2
                 id="judul-terkait"
@@ -1116,6 +1266,8 @@ function TaskDetailContent() {
           <p>© 2026 {OWNER}. All rights reserved.</p>
         </div>
       </footer>
+
+      <BackToTop />
     </div>
   );
 }

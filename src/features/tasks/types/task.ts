@@ -12,13 +12,16 @@ export interface Task {
     id: string;
     course_id: string;
     title: string;
-    description: string | null;
+        description: string | null;
+    content: string | null;
+    show_description: boolean;
+    show_content: boolean;
+    link_url: string | null;
     semester: number;
     academic_year: string;
     deadline: string | null;
     status: TaskStatus;
     work_type: WorkType;
-    content: string | null;
     document_name: string | null;
     document_path: string | null;
     thumbnail_path: string | null;

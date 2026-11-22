@@ -15,6 +15,9 @@ export async function getPublishedTasks(): Promise<Task[]> {
       status,
       work_type,
       content,
+      show_description,
+      show_content,
+      link_url,
       document_name,
       document_path,
       thumbnail_path,
@@ -31,5 +34,15 @@ export async function getPublishedTasks(): Promise<Task[]> {
         throw new Error("Tidak dapat mengambil data tugas.");
     }
 
-    return (data ?? []) as unknown as Task[];
+    const tasks = (data ?? []) as unknown as Task[];
+
+    // Kolom yang disembunyikan admin, atau yang kosong, diperlakukan sebagai
+    // tidak ada di sisi publik
+    return tasks.map((task) => ({
+        ...task,
+        description: task.show_description
+            ? task.description?.trim() || null
+            : null,
+        content: task.show_content ? task.content?.trim() || null : null,
+    }));
 }

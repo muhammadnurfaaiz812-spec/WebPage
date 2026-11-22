@@ -79,6 +79,24 @@ function formatSize(bytes: number) {
     : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
+/** Rapikan tautan. Mengembalikan null kalau tidak valid; hanya http(s) yang diterima. */
+function normalizeLink(raw: string): string | null {
+  const value = raw.trim();
+  const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(value)
+    ? value
+    : `https://${value}`;
+  try {
+    const url = new URL(candidate);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!url.hostname.includes(".")) return null; // menangkap salah ketik seperti "https://web"
+    return url.pathname === "/" && !url.search && !url.hash
+      ? url.origin
+      : url.toString();
+  } catch {
+    return null;
+  }
+}
+
 /** Tanggal ISO (YYYY-MM-DD) ke teks panjang, mis. "Sabtu, 14 November 2026". */
 function formatLongDate(iso: string) {
   return new Date(iso).toLocaleDateString("id-ID", {
@@ -132,8 +150,8 @@ const STATUS_OPTIONS: {
     },
   ];
 
-// Kolom wajib: id elemen, nama untuk pesan, dan urutan fokus saat validasi gagal
-type FieldKey = "title" | "course" | "semester" | "year";
+// Kolom yang divalidasi: id elemen, nama untuk pesan, dan urutan fokus saat validasi gagal
+type FieldKey = "title" | "course" | "semester" | "year" | "link";
 type FieldErrors = Partial<Record<FieldKey, string>>;
 
 const FIELD_IDS: Record<FieldKey, string> = {
@@ -141,14 +159,16 @@ const FIELD_IDS: Record<FieldKey, string> = {
   course: "mata-kuliah",
   semester: "semester",
   year: "tahun-ajaran",
+  link: "tautan",
 };
 const FIELD_LABELS: Record<FieldKey, string> = {
   title: "Judul tugas",
   course: "Mata kuliah",
   semester: "Semester",
   year: "Tahun ajaran",
+  link: "Tautan",
 };
-const FIELD_ORDER: FieldKey[] = ["title", "course", "semester", "year"];
+const FIELD_ORDER: FieldKey[] = ["title", "course", "semester", "year", "link"];
 
 function focusField(id: string) {
   const el = document.getElementById(id);
@@ -212,6 +232,12 @@ const ICONS = {
     <>
       <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
       <path d="M14 2v6h6M16 13H8M16 17H8" />
+    </>
+  ),
+  link: (
+    <>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
     </>
   ),
   image: (
@@ -377,7 +403,58 @@ function FieldError({ id, message }: { id: string; message: string }) {
   );
 }
 
-/** Label (+ penghitung opsional) + kontrol + petunjuk atau pesan error. */
+/**
+ * Saklar "tampilkan ke publik" untuk kolom opsional. Kalau kolomnya kosong,
+ * saklar nonaktif dan tampil mati: kolom kosong tidak pernah ditampilkan.
+ */
+function VisibilitySwitch({
+  name,
+  checked,
+  empty,
+  onChange,
+}: {
+  name: string;
+  checked: boolean;
+  empty: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  const on = checked && !empty;
+  const text = empty
+    ? "Kosong, tidak ditampilkan"
+    : on
+      ? "Tampil di publik"
+      : "Disembunyikan";
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={`Tampilkan ${name} ke publik`}
+      disabled={empty}
+      onClick={() => onChange(!checked)}
+      className={`inline-flex items-center gap-2 rounded-full py-0.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${on
+          ? "text-emerald-800 dark:text-emerald-300"
+          : "text-slate-600 dark:text-slate-400"
+        } ${focusRing}`}
+    >
+      <span
+        aria-hidden="true"
+        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${on
+            ? "bg-emerald-600 dark:bg-emerald-500"
+            : "bg-slate-300 dark:bg-slate-600"
+          }`}
+      >
+        <span
+          className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 motion-reduce:transition-none ${on ? "translate-x-4" : ""
+            }`}
+        />
+      </span>
+      {text}
+    </button>
+  );
+}
+
+/** Label (+ penghitung atau aksi opsional) + kontrol + petunjuk atau pesan error. */
 function Field({
   id,
   label,
@@ -385,6 +462,7 @@ function Field({
   hint,
   error,
   counter,
+  action,
   className,
   children,
 }: {
@@ -394,6 +472,7 @@ function Field({
   hint?: ReactNode;
   error?: string;
   counter?: string;
+  action?: ReactNode;
   className?: string;
   children: ReactNode;
 }) {
@@ -422,6 +501,7 @@ function Field({
             {counter}
           </span>
         )}
+        {action && <div className="mb-1.5">{action}</div>}
       </div>
       {children}
       {error ? (
@@ -525,6 +605,11 @@ export default function TaskForm({ task }: { task?: Task }) {
   const [description, setDescription] = useState(task?.description ?? "");
   const [content, setContent] = useState(task?.content ?? "");
   const [contentPreview, setContentPreview] = useState(false);
+  const [showDescription, setShowDescription] = useState(
+    task?.show_description ?? true
+  );
+  const [showContent, setShowContent] = useState(task?.show_content ?? true);
+  const [linkUrl, setLinkUrl] = useState(task?.link_url ?? "");
   const [semester, setSemester] = useState(task ? String(task.semester) : "");
   const [academicYear, setAcademicYear] = useState(
     task?.academic_year ?? defaultAcademicYear()
@@ -542,6 +627,9 @@ export default function TaskForm({ task }: { task?: Task }) {
     courseId: task?.course_id ?? "",
     description: task?.description ?? "",
     content: task?.content ?? "",
+    showDescription: task?.show_description ?? true,
+    showContent: task?.show_content ?? true,
+    linkUrl: task?.link_url ?? "",
     semester: task ? String(task.semester) : "",
     academicYear: task?.academic_year ?? defaultAcademicYear(),
     deadline: task?.deadline ?? "",
@@ -601,7 +689,7 @@ export default function TaskForm({ task }: { task?: Task }) {
   const barMessage =
     error ??
     (missingFields.length > 0
-      ? `Lengkapi dulu: ${missingFields.join(", ")}.`
+      ? `Periksa dulu: ${missingFields.join(", ")}.`
       : null);
 
   const semesterNumber = Number(semester);
@@ -630,12 +718,37 @@ export default function TaskForm({ task }: { task?: Task }) {
     "Boleh dikosongkan."
   );
 
+  // Kolom opsional yang kosong tidak pernah tampil di publik
+  const descriptionEmpty = !description.trim();
+  const contentEmpty = !content.trim();
+
+  // Tautan yang sudah dirapikan; null kalau kosong atau tidak valid
+  const validLink = linkUrl.trim() ? normalizeLink(linkUrl) : null;
+  const linkHint = validLink ? (
+    <>
+      Akan membuka <strong>{new URL(validLink).hostname}</strong>.{" "}
+      <a
+        href={validLink}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`rounded font-semibold text-emerald-700 hover:underline dark:text-emerald-300 ${focusRing}`}
+      >
+        Coba buka
+      </a>
+    </>
+  ) : (
+    "Mis. website tugas yang sudah di-hosting. Boleh dipakai bersama berkas."
+  );
+
   // Ada perubahan yang belum disimpan?
   const dirty =
     title !== initial.title ||
     courseId !== initial.courseId ||
     description !== initial.description ||
     content !== initial.content ||
+    showDescription !== initial.showDescription ||
+    showContent !== initial.showContent ||
+    linkUrl !== initial.linkUrl ||
     semester !== initial.semester ||
     academicYear !== initial.academicYear ||
     deadline !== initial.deadline ||
@@ -864,6 +977,9 @@ export default function TaskForm({ task }: { task?: Task }) {
     const trimmedTitle = title.trim();
     const year = academicYear.trim();
     const [startYear, endYear] = year.split("/").map(Number);
+    // "" = tidak ada tautan, null = tautan tidak valid
+    const linkText = linkUrl.trim();
+    const link = linkText ? normalizeLink(linkText) : "";
 
     const found: FieldErrors = {};
     if (!trimmedTitle) found.title = "Judul tugas wajib diisi.";
@@ -877,6 +993,10 @@ export default function TaskForm({ task }: { task?: Task }) {
     }
     if (!/^\d{4}\/\d{4}$/.test(year) || endYear !== startYear + 1) {
       found.year = "Pilih tahun ajaran.";
+    }
+    if (link === null) {
+      found.link =
+        "Alamat tautan tidak valid. Contoh: https://namaweb.vercel.app";
     }
 
     setErrors(found);
@@ -897,6 +1017,9 @@ export default function TaskForm({ task }: { task?: Task }) {
           title: trimmedTitle,
           description: description.trim() || null,
           content: content.trim() || null,
+          show_description: showDescription,
+          show_content: showContent,
+          link_url: link || null,
           semester: semesterNumber,
           academic_year: year,
           deadline: deadline || null,
@@ -1136,6 +1259,14 @@ export default function TaskForm({ task }: { task?: Task }) {
                 id="deskripsi"
                 label="Deskripsi"
                 hint="Jelaskan isi dan ketentuan tugas. Baris kosong akan menjadi paragraf baru."
+                action={
+                  <VisibilitySwitch
+                    name="deskripsi"
+                    checked={showDescription}
+                    empty={descriptionEmpty}
+                    onChange={setShowDescription}
+                  />
+                }
               >
                 <textarea
                   id="deskripsi"
@@ -1156,6 +1287,14 @@ export default function TaskForm({ task }: { task?: Task }) {
                     Blok <code>```disk</code> membuat tabel dan grafik Disk Scheduling
                     otomatis dari data soal.
                   </>
+                }
+                action={
+                  <VisibilitySwitch
+                    name="isi posting"
+                    checked={showContent}
+                    empty={contentEmpty}
+                    onChange={setShowContent}
+                  />
                 }
               >
                 <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -1183,7 +1322,9 @@ export default function TaskForm({ task }: { task?: Task }) {
                     type="button"
                     onClick={() =>
                       setContent(
-                        (prev) => (prev.trim() ? prev.trimEnd() + "\n\n" : "") + DISK_TEMPLATE
+                        (prev) =>
+                          (prev.trim() ? prev.trimEnd() + "\n\n" : "") +
+                          DISK_TEMPLATE
                       )
                     }
                     className={`${btnSecondary} !h-9 !px-3 text-xs`}
@@ -1314,11 +1455,11 @@ export default function TaskForm({ task }: { task?: Task }) {
             </div>
           </Section>
 
-          {/* ───── 3. Berkas ───── */}
+          {/* ───── 3. Berkas dan tautan ───── */}
           <Section
             step={3}
-            title="Berkas tugas"
-            description="Opsional. Tanpa berkas, tombol Unduh di kartu akan nonaktif."
+            title="Berkas dan tautan"
+            description="Opsional. Unggah berkas, tambahkan tautan, atau keduanya. Tanpa berkas, tombol Unduh akan nonaktif."
           >
             {/* Input asli disembunyikan; area seret-lepas dan tombol memicunya */}
             <input
@@ -1434,6 +1575,41 @@ export default function TaskForm({ task }: { task?: Task }) {
             {(showRemoved || (!showNew && !showCurrent)) && dropzone}
 
             {fileError && <FieldError id="berkas-error" message={fileError} />}
+
+            {/* Tautan: berdiri sendiri, bisa dipakai bersama atau tanpa berkas */}
+            <Field
+              id="tautan"
+              label="Tautan (opsional)"
+              error={errors.link}
+              hint={linkHint}
+              className="mt-5"
+            >
+              <div className="relative">
+                <Icon
+                  name="link"
+                  className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500"
+                />
+                <input
+                  id="tautan"
+                  type="text"
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={linkUrl}
+                  onChange={(e) => {
+                    setLinkUrl(e.target.value);
+                    clearError("link");
+                  }}
+                  onBlur={() => {
+                    if (validLink) setLinkUrl(validLink);
+                  }}
+                  placeholder="https://namaweb.vercel.app"
+                  aria-invalid={errors.link ? true : undefined}
+                  aria-describedby={descId("tautan", errors.link, linkHint)}
+                  className={`${field} ${invalidField} pl-10`}
+                />
+              </div>
+            </Field>
           </Section>
         </div>
 

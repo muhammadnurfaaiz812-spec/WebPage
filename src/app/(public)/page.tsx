@@ -63,6 +63,7 @@ type Task = {
   fileSize?: string; // opsional, contoh: "1.8 MB"
   meeting?: string; // opsional, contoh: "Pertemuan 9"
   fileUrl?: string; // tautan unduh; tombol "Unduh" aktif hanya kalau diisi
+  linkUrl?: string; // tautan luar (opsional); tombol hanya muncul kalau diisi
   previewUrl?: string; // gambar pratinjau berkas; sampul pengganti kalau kosong
 };
 
@@ -95,6 +96,14 @@ const BANNER_IMAGE = "/fotoPribadi.jpg";
 // turunkan kalau terlalu ke bawah (foto potret, jadi hasilnya sensitif).
 const BANNER_FOCUS =
   "object-[center_47%] sm:object-[center_40%] md:object-[center_51%]";
+
+function hostOf(url: string) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString("id-ID", {
@@ -411,6 +420,13 @@ const ICONS = {
       <path d="m7 10 5 5 5-5M12 15V3" />
     </>
   ),
+  external: (
+    <>
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </>
+  ),
   file: (
     <>
       <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
@@ -608,7 +624,8 @@ function DeadlineHint({ deadline }: { deadline: string }) {
   4. Chip metadata, selalu menempel di bawah isi:
      - jenis berkas, hanya kalau berkas diunggah (kolom document_*)
      - jenis tugas Individu / Kelompok (kolom work_type)
-  5. Bilah aksi terpisah garis: Lihat Detail (utama) dan Unduh.
+    5. Bilah aksi terpisah garis: Lihat Detail (utama), Unduh, dan tombol
+     tautan luar (hanya kalau tugas punya link_url).
      Unduh hanya aktif kalau tugas punya berkas.
   Bilah aksi selalu sejajar antar-kartu walau panjang judul berbeda.
 */
@@ -618,6 +635,7 @@ function TaskCard({ task }: { task: Task }) {
     "loading" | "ready" | "failed"
   >("loading");
   const showPreview = Boolean(task.previewUrl) && previewState !== "failed";
+  const linkHost = task.linkUrl ? hostOf(task.linkUrl) : "";
 
   const chips: { icon: IconName; text: string }[] = [];
   if (task.fileUrl) {
@@ -657,9 +675,8 @@ function TaskCard({ task }: { task: Task }) {
             decoding="async"
             onLoad={() => setPreviewState("ready")}
             onError={() => setPreviewState("failed")}
-            className={`absolute inset-0 h-full w-full bg-white object-cover object-top transition duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:transform-none ${
-              previewState === "ready" ? "opacity-100" : "opacity-0"
-            }`}
+            className={`absolute inset-0 h-full w-full bg-white object-cover object-top transition duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:transform-none ${previewState === "ready" ? "opacity-100" : "opacity-0"
+              }`}
           />
         )}
       </Link>
@@ -690,9 +707,11 @@ function TaskCard({ task }: { task: Task }) {
         >
           {task.title}
         </h3>
-        <p className={`mt-2 line-clamp-3 text-sm leading-6 ${textMuted}`}>
-          {task.description}
-        </p>
+        {task.description && (
+          <p className={`mt-2 line-clamp-3 text-sm leading-6 ${textMuted}`}>
+            {task.description}
+          </p>
+        )}
 
         {/* Batas pengumpulan dan waktu dipublikasikan, dengan label */}
         <dl className="mt-4 divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/70 text-xs dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-950/40">
@@ -794,6 +813,21 @@ function TaskCard({ task }: { task: Task }) {
             Unduh
           </button>
         )}
+        {task.linkUrl && (
+          <a
+            href={task.linkUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Buka tautan ${linkHost} (tab baru): ${task.title}`}
+            title={`Buka ${linkHost}`}
+            className={`group/btn w-11 shrink-0 ${btnShape} ${btnNeutral} ${hoverBrand} ${focusRing}`}
+          >
+            <Icon
+              name="external"
+              className="h-4 w-4 transition duration-200 group-hover/btn:-translate-y-0.5 group-hover/btn:translate-x-0.5"
+            />
+          </a>
+        )}
       </div>
     </article>
   );
@@ -887,6 +921,7 @@ export default function Home() {
           status: DEFAULT_STATUS,
           fileType: urls ? getFileExtension(item.document_name) : undefined,
           fileUrl: urls?.download,
+          linkUrl: item.link_url ?? undefined,
           previewUrl: getThumbnailUrl(item.thumbnail_path),
         };
       }),
@@ -944,7 +979,7 @@ export default function Home() {
     document.documentElement.classList.toggle("dark", next);
     try {
       localStorage.setItem("theme", next ? "dark" : "light");
-    } catch {}
+    } catch { }
   }
 
   // Banner: foto bergeser halus mengikuti kursor (hanya mouse, bukan sentuhan)
@@ -1019,9 +1054,8 @@ export default function Home() {
     ? "Memuat data tugas..."
     : error
       ? "Data tugas tidak tersedia."
-      : `Menampilkan ${filteredTasks.length}${
-          hasActiveFilters ? ` dari ${tasks.length}` : ""
-        } tugas`;
+      : `Menampilkan ${filteredTasks.length}${hasActiveFilters ? ` dari ${tasks.length}` : ""
+      } tugas`;
 
   // Grid kartu: 1 kolom di mobile, 2 di tablet, 3 di desktop
   const cardGrid =
@@ -1042,14 +1076,12 @@ export default function Home() {
           Latar selebar layar, isi dibatasi CONTAINER. Tahun ajaran tampil di
           sini mulai tablet; di mobile pindah ke banner supaya header tetap lega. */}
       <header
-        className={`sticky top-0 z-50 w-full border-b border-slate-200 bg-white/85 backdrop-blur-md transition-shadow duration-300 dark:border-slate-800 dark:bg-slate-950/85 ${
-          scrolled ? "shadow-md shadow-slate-900/5 dark:shadow-black/20" : ""
-        }`}
+        className={`sticky top-0 z-50 w-full border-b border-slate-200 bg-white/85 backdrop-blur-md transition-shadow duration-300 dark:border-slate-800 dark:bg-slate-950/85 ${scrolled ? "shadow-md shadow-slate-900/5 dark:shadow-black/20" : ""
+          }`}
       >
         <div
-          className={`${CONTAINER} flex items-center justify-between gap-3 transition-[height] duration-300 ${
-            scrolled ? "h-14" : "h-16"
-          }`}
+          className={`${CONTAINER} flex items-center justify-between gap-3 transition-[height] duration-300 ${scrolled ? "h-14" : "h-16"
+            }`}
         >
           <Link
             href="/"
@@ -1098,19 +1130,17 @@ export default function Home() {
               <span className="relative block h-[18px] w-[18px]">
                 <Icon
                   name="sun"
-                  className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${
-                    dark
-                      ? "rotate-0 scale-100 opacity-100"
-                      : "-rotate-90 scale-0 opacity-0"
-                  }`}
+                  className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${dark
+                    ? "rotate-0 scale-100 opacity-100"
+                    : "-rotate-90 scale-0 opacity-0"
+                    }`}
                 />
                 <Icon
                   name="moon"
-                  className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${
-                    dark
-                      ? "rotate-90 scale-0 opacity-0"
-                      : "rotate-0 scale-100 opacity-100"
-                  }`}
+                  className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${dark
+                    ? "rotate-90 scale-0 opacity-0"
+                    : "rotate-0 scale-100 opacity-100"
+                    }`}
                 />
               </span>
             </button>
@@ -1324,11 +1354,10 @@ export default function Home() {
                     onClick={() => setFiltersOpen((open) => !open)}
                     aria-expanded={filtersOpen}
                     aria-controls="panel-filter"
-                    className={`shrink-0 px-3.5 lg:hidden ${btnShape} ${
-                      filtersOpen || activeFilters > 0
-                        ? btnBrandOn
-                        : `${btnNeutral} ${hoverBrand}`
-                    } ${focusRing}`}
+                    className={`shrink-0 px-3.5 lg:hidden ${btnShape} ${filtersOpen || activeFilters > 0
+                      ? btnBrandOn
+                      : `${btnNeutral} ${hoverBrand}`
+                      } ${focusRing}`}
                   >
                     <Icon name="sliders" />
                     Filter
@@ -1348,11 +1377,10 @@ export default function Home() {
                   lg:contents membuat isinya ikut grid 12 kolom di atas. */}
               <div
                 id="panel-filter"
-                className={`grid transition-[grid-template-rows,visibility] duration-300 ease-out lg:contents ${
-                  filtersOpen
-                    ? "visible grid-rows-[1fr]"
-                    : "invisible grid-rows-[0fr]"
-                } lg:visible`}
+                className={`grid transition-[grid-template-rows,visibility] duration-300 ease-out lg:contents ${filtersOpen
+                  ? "visible grid-rows-[1fr]"
+                  : "invisible grid-rows-[0fr]"
+                  } lg:visible`}
               >
                 <div className="-mx-1 min-h-0 overflow-hidden px-1 pb-1 lg:contents">
                   <div className="grid grid-cols-1 gap-4 pt-4 sm:grid-cols-2 lg:contents">
@@ -1496,11 +1524,10 @@ export default function Home() {
         aria-label="Kembali ke atas"
         aria-hidden={!showTop}
         tabIndex={showTop ? 0 : -1}
-        className={`fixed bottom-5 right-4 z-40 flex h-11 w-11 items-center justify-center rounded-full shadow-lg shadow-emerald-900/25 transition-all duration-300 hover:-translate-y-1 active:scale-90 sm:bottom-6 sm:right-6 ${brandSolid} ${focusRing} ${
-          showTop
-            ? "translate-y-0 opacity-100"
-            : "pointer-events-none translate-y-4 opacity-0"
-        }`}
+        className={`fixed bottom-5 right-4 z-40 flex h-11 w-11 items-center justify-center rounded-full shadow-lg shadow-emerald-900/25 transition-all duration-300 hover:-translate-y-1 active:scale-90 sm:bottom-6 sm:right-6 ${brandSolid} ${focusRing} ${showTop
+          ? "translate-y-0 opacity-100"
+          : "pointer-events-none translate-y-4 opacity-0"
+          }`}
       >
         <Icon name="chevron" className="h-5 w-5 rotate-180" />
       </button>
