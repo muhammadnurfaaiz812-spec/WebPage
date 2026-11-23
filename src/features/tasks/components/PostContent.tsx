@@ -1,7 +1,7 @@
 "use client";
 
 /* Menampilkan isi posting dalam Markdown (tabel, judul, daftar, gambar).
-   Blok berpagar ```disk ... ``` diubah menjadi jawaban Disk Scheduling lengkap.
+   Blok ```disk ... ``` jadi jawaban Disk Scheduling, blok ```cpu ... ``` jadi jawaban CPU Scheduling.
    Butuh: npm i react-markdown remark-gfm
    Simpan sebagai src/features/tasks/components/PostContent.tsx
    Catatan keamanan: HTML mentah di dalam Markdown TIDAK dirender. */
@@ -9,6 +9,7 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import DiskSchedulingPost from "@/features/tasks/components/DiskSchedulingPost";
+import CpuSchedulingPost from "@/features/tasks/components/CpuSchedulingPost";
 
 const textHeading = "text-slate-900 dark:text-slate-50";
 
@@ -95,6 +96,13 @@ const components: Components = {
             return (
                 <div className="my-6">
                     <DiskSchedulingPost source={text} />
+                </div>
+            );
+        }
+        if (lang === "cpu") {
+            return (
+                <div className="my-6">
+                    <CpuSchedulingPost source={text} />
                 </div>
             );
         }

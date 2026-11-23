@@ -31,13 +31,17 @@ import { WORK_TYPE_LABEL, type WorkType } from "@/features/tasks/types/task";
    Kartu mengikuti database dan panel admin:
    - Tombol "Unduh" dan chip berkas hanya muncul kalau tugas punya berkas
      (document_path terisi). Tanpa berkas, tombolnya nonaktif.
+   - Tautan (kolom link_url) tampil di dalam kartu sebagai baris yang bisa
+     diklik, lengkap dengan nama situsnya. Tanpa tautan, baris itu tidak ada.
    - Chip "Individu" / "Kelompok" berasal dari kolom work_type, yang
      diatur lewat dropdown "Jenis tugas" di panel admin.
-   - Gambar di atas kartu adalah cuplikan halaman 1 berkas PDF (kolom
-     thumbnail_path), dibuat otomatis di panel admin saat berkas diunggah.
-     Berkas non-PDF, tugas tanpa berkas, atau gambar yang gagal dimuat
-     memakai sampul pengganti (ikon sesuai jenis berkas), jadi setiap
-     kartu selalu punya area gambar dan tingginya seragam.
+   - Gambar sampul (kolom thumbnail_path): cuplikan halaman 1 berkas PDF
+     atau gambar yang dibuat otomatis di panel admin, atau gambar pilihan
+     sendiri. Tugas tanpa gambar, atau gambar yang gagal dimuat, memakai
+     sampul pengganti (ikon sesuai berkas atau tautan), jadi setiap kartu
+     selalu punya area gambar dan ukurannya seragam.
+   - Deskripsi yang disembunyikan lewat saklar di panel admin
+     (show_description) tidak ditampilkan di kartu.
    - Batas pengumpulan dari kolom deadline, waktu dipublikasikan dari
      kolom created_at (ditampilkan dalam WIB).
    Field bertanda "opsional" boleh dihapus; UI akan menyesuaikan.
@@ -63,7 +67,7 @@ type Task = {
   fileSize?: string; // opsional, contoh: "1.8 MB"
   meeting?: string; // opsional, contoh: "Pertemuan 9"
   fileUrl?: string; // tautan unduh; tombol "Unduh" aktif hanya kalau diisi
-  linkUrl?: string; // tautan luar (opsional); tombol hanya muncul kalau diisi
+  linkUrl?: string; // tautan luar (opsional); baris tautan hanya muncul kalau diisi
   previewUrl?: string; // gambar pratinjau berkas; sampul pengganti kalau kosong
 };
 
@@ -100,6 +104,18 @@ const BANNER_FOCUS =
 function hostOf(url: string) {
   try {
     return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+/** Tautan untuk ditampilkan: nama situs + path, tanpa "https://", "www." dan query. */
+function displayLink(url: string) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, "");
+    const path = u.pathname === "/" ? "" : u.pathname.replace(/\/$/, "");
+    return `${host}${path}`;
   } catch {
     return url;
   }
@@ -316,6 +332,10 @@ const textMuted = "text-slate-600 dark:text-slate-400";
 const brandTint =
   "bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20";
 
+// Netral: lencana kecil untuk metadata kartu (jenis berkas, individu / kelompok)
+const neutralTag =
+  "bg-slate-50 text-slate-700 ring-1 ring-inset ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700";
+
 // Brand: tombol utama berisi penuh
 const brandSolid = "bg-emerald-700 text-white hover:bg-emerald-800";
 
@@ -425,6 +445,12 @@ const ICONS = {
       <path d="M15 3h6v6" />
       <path d="M10 14 21 3" />
       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </>
+  ),
+  link: (
+    <>
+      <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+      <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
     </>
   ),
   file: (
@@ -557,10 +583,20 @@ const COVER_ICON: Record<string, IconName> = {
   PPT: "slides",
 };
 
-/** Sampul pengganti: latar bertint, pola titik, dan ubin berisi ikon jenis berkas.
-    Hanya ikon, tanpa teks, karena jenis berkas sudah ada di chip di bawah. */
-function CoverPlaceholder({ fileType }: { fileType?: string }) {
-  const icon = (fileType && COVER_ICON[fileType.toUpperCase()]) || "file";
+/** Sampul pengganti: latar bertint, pola titik, dan ubin berisi ikon.
+    Ikonnya menurut jenis berkas; tugas tanpa berkas tapi bertautan memakai
+    ikon tautan. Hanya ikon, tanpa teks, karena jenis berkas dan tautan
+    sudah ada di bagian lain kartu. */
+function CoverPlaceholder({
+  fileType,
+  hasLink,
+}: {
+  fileType?: string;
+  hasLink?: boolean;
+}) {
+  const icon: IconName =
+    (fileType && COVER_ICON[fileType.toUpperCase()]) ||
+    (!fileType && hasLink ? "link" : "file");
   return (
     <div
       aria-hidden="true"
@@ -575,9 +611,9 @@ function CoverPlaceholder({ fileType }: { fileType?: string }) {
         }}
       />
       <span
-        className={`relative flex h-16 w-16 items-center justify-center rounded-2xl transition duration-300 group-hover:-rotate-3 group-hover:scale-105 motion-reduce:transition-none motion-reduce:group-hover:transform-none ${coverTile}`}
+        className={`relative flex h-14 w-14 items-center justify-center rounded-2xl transition duration-300 group-hover:-rotate-3 group-hover:scale-105 motion-reduce:transition-none motion-reduce:group-hover:transform-none md:h-16 md:w-16 ${coverTile}`}
       >
-        <Icon name={icon} className="h-8 w-8" />
+        <Icon name={icon} className="h-7 w-7 md:h-8 md:w-8" />
       </span>
     </div>
   );
@@ -611,23 +647,35 @@ function DeadlineHint({ deadline }: { deadline: string }) {
   );
 }
 
+// Kerangka kartu, dipakai bersama oleh kartu dan kerangka pemuatan supaya
+// ukurannya selalu sama. Kolom: sampul | isi | (aksi, mulai lg).
+//   < sm : satu kolom, bertumpuk (sampul, isi, aksi)
+//   sm-md: dua kolom, aksi menjadi bilah di bawah keduanya
+//   lg+  : tiga kolom, aksi menjadi kolom di kanan
+const CARD_LAYOUT =
+  "grid grid-cols-1 sm:grid-cols-[13rem_minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)] lg:grid-cols-[20rem_minmax(0,1fr)_12rem]";
+
+// Sel sampul: memberi jarak di sekeliling gambar. Tepi kanan dikosongkan
+// mulai sm karena isi sudah punya jarak kirinya sendiri.
+const COVER_CELL = "p-3 sm:p-4 sm:pr-0 md:p-5 md:pr-0";
+
+// Sel aksi: bilah di bawah (mobile dan tablet), kolom di kanan (lg ke atas)
+const ACTION_CELL =
+  "flex gap-2.5 border-t border-slate-200 bg-slate-50/70 p-3 sm:col-span-2 sm:justify-end sm:p-4 lg:col-span-1 lg:flex-col lg:justify-center lg:border-l lg:border-t-0 lg:p-5 dark:border-slate-800 dark:bg-slate-950/40";
+
 /*
-  Susunan kartu, dari atas ke bawah:
-  0. Sampul 16:9, selalu ada supaya semua kartu seragam:
-     - pratinjau halaman 1 berkas PDF (bagian atas) kalau ada dan berhasil dimuat
-     - selain itu sampul pengganti dengan ikon sesuai jenis berkas
-  1. Mata kuliah (+ status bila bukan bawaan)
-  2. Judul (maks. 3 baris) dan deskripsi (maks. 3 baris)
-  3. Kotak waktu, dua baris berlabel:
-     - Batas pengumpulan (+ sisa waktu)
-     - Dipublikasikan (tanggal dan jam, WIB)
-  4. Chip metadata, selalu menempel di bawah isi:
-     - jenis berkas, hanya kalau berkas diunggah (kolom document_*)
-     - jenis tugas Individu / Kelompok (kolom work_type)
-    5. Bilah aksi terpisah garis: Lihat Detail (utama), Unduh, dan tombol
-     tautan luar (hanya kalau tugas punya link_url).
-     Unduh hanya aktif kalau tugas punya berkas.
-  Bilah aksi selalu sejajar antar-kartu walau panjang judul berbeda.
+  Satu tugas = satu baris, tiga zona:
+
+  Sampul : gambar 16:9 di dalam bingkai membulat, tidak pernah terpotong
+           ke bentuk lain. Pratinjau berkas atau gambar pilihan sendiri;
+           kalau tidak ada, sampul pengganti dengan ikon berkas atau tautan.
+  Isi    : 1. Baris label: mata kuliah, status (bila bukan bawaan), jenis
+              berkas, pertemuan, Individu / Kelompok
+           2. Judul (bisa diklik) dan deskripsi, maks. 2 baris
+           3. Panel info yang menempel di bawah isi: Batas pengumpulan
+              (+ sisa waktu), Dipublikasikan (WIB), dan kalau ada link_url,
+              baris Tautan yang membuka tab baru
+  Aksi   : Lihat Detail dan Unduh. Unduh hanya aktif kalau tugas punya berkas.
 */
 function TaskCard({ task }: { task: Task }) {
   const status = STATUS_STYLE[task.status];
@@ -636,6 +684,8 @@ function TaskCard({ task }: { task: Task }) {
   >("loading");
   const showPreview = Boolean(task.previewUrl) && previewState !== "failed";
   const linkHost = task.linkUrl ? hostOf(task.linkUrl) : "";
+  const linkLabel = task.linkUrl ? displayLink(task.linkUrl) : "";
+  const detailHref = `/tugas/${task.id}`;
 
   const chips: { icon: IconName; text: string }[] = [];
   if (task.fileUrl) {
@@ -653,37 +703,43 @@ function TaskCard({ task }: { task: Task }) {
 
   return (
     <article
-      className={`${surface} group flex h-full flex-col overflow-hidden rounded-2xl shadow-sm transition duration-200 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-900/5 dark:hover:border-emerald-500/40 dark:hover:shadow-none`}
+      className={`${surface} ${CARD_LAYOUT} group overflow-hidden rounded-2xl shadow-sm transition duration-200 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-900/5 dark:hover:border-emerald-500/40 dark:hover:shadow-none`}
     >
       {/* Sampul. Berupa tautan ke halaman detail, tapi disembunyikan dari
-          pembaca layar dan urutan Tab karena "Lihat Detail" sudah ada.
-          Sampul pengganti selalu digambar di bawah; pratinjau menutupinya
+          pembaca layar dan urutan Tab karena judul dan "Lihat Detail" sudah ada.
+          Sampul pengganti selalu digambar di bawah; gambar menutupinya
           setelah selesai dimuat, jadi tidak ada kedipan atau loncatan tata letak. */}
-      <Link
-        href={`/tugas/${task.id}`}
-        tabIndex={-1}
-        aria-hidden="true"
-        className="relative block aspect-[16/9] shrink-0 overflow-hidden border-b border-slate-200 dark:border-slate-800"
-      >
-        <CoverPlaceholder fileType={task.fileType} />
-        {showPreview && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={task.previewUrl}
-            alt=""
-            loading="lazy"
-            decoding="async"
-            onLoad={() => setPreviewState("ready")}
-            onError={() => setPreviewState("failed")}
-            className={`absolute inset-0 h-full w-full bg-white object-cover object-top transition duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:transform-none ${previewState === "ready" ? "opacity-100" : "opacity-0"
-              }`}
+      <div className={COVER_CELL}>
+        <Link
+          href={detailHref}
+          tabIndex={-1}
+          aria-hidden="true"
+          className="relative block aspect-[16/9] overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800"
+        >
+          <CoverPlaceholder
+            fileType={task.fileType}
+            hasLink={Boolean(task.linkUrl)}
           />
-        )}
-      </Link>
+          {showPreview && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={task.previewUrl}
+              alt=""
+              loading="lazy"
+              decoding="async"
+              onLoad={() => setPreviewState("ready")}
+              onError={() => setPreviewState("failed")}
+              className={`absolute inset-0 h-full w-full bg-white object-cover object-top transition duration-500 group-hover:scale-[1.03] motion-reduce:transition-none motion-reduce:group-hover:transform-none ${previewState === "ready" ? "opacity-100" : "opacity-0"
+                }`}
+            />
+          )}
+        </Link>
+      </div>
 
-      <div className="flex flex-1 flex-col p-4 sm:p-5">
-        {/* Mata kuliah dan status (hanya jika bukan bawaan) */}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+      {/* Isi */}
+      <div className="flex min-w-0 flex-col px-4 pb-4 pt-2 sm:p-5">
+        {/* Baris label: satu baris rapat, bukan tersebar di beberapa tempat */}
+        <div className="flex flex-wrap items-center gap-2">
           <span
             className={`rounded-md px-2.5 py-1 text-xs font-semibold ${brandTint}`}
           >
@@ -697,74 +753,10 @@ function TaskCard({ task }: { task: Task }) {
               {task.status}
             </span>
           )}
-        </div>
-
-        {/* Judul dan deskripsi. Judul panjang dipotong di 3 baris;
-            teks lengkap tetap ada di tooltip dan halaman detail. */}
-        <h3
-          title={task.title}
-          className={`mt-4 line-clamp-3 text-lg font-bold leading-snug tracking-tight ${textHeading}`}
-        >
-          {task.title}
-        </h3>
-        {task.description && (
-          <p className={`mt-2 line-clamp-3 text-sm leading-6 ${textMuted}`}>
-            {task.description}
-          </p>
-        )}
-
-        {/* Batas pengumpulan dan waktu dipublikasikan, dengan label */}
-        <dl className="mt-4 divide-y divide-slate-200 overflow-hidden rounded-xl border border-slate-200 bg-slate-50/70 text-xs dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-950/40">
-          <div className="flex items-center justify-between gap-3 px-3 py-2.5">
-            <dt
-              className={`inline-flex shrink-0 items-center gap-1.5 font-medium ${textMuted}`}
-            >
-              <Icon name="calendar" className="h-3.5 w-3.5 text-slate-500" />
-              Batas pengumpulan
-            </dt>
-            <dd className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 text-right">
-              {task.deadline ? (
-                <>
-                  <time
-                    dateTime={task.deadline}
-                    className="font-semibold tabular-nums text-slate-800 dark:text-slate-100"
-                  >
-                    {formatDate(task.deadline)}
-                  </time>
-                  <DeadlineHint deadline={task.deadline} />
-                </>
-              ) : (
-                <span className={textMuted}>Belum ditentukan</span>
-              )}
-            </dd>
-          </div>
-
-          {task.createdAt && (
-            <div className="flex items-center justify-between gap-3 px-3 py-2.5">
-              <dt
-                className={`inline-flex shrink-0 items-center gap-1.5 font-medium ${textMuted}`}
-              >
-                <Icon name="clock" className="h-3.5 w-3.5 text-slate-500" />
-                Dipublikasikan
-              </dt>
-              <dd>
-                <time
-                  dateTime={task.createdAt}
-                  className="font-medium tabular-nums text-slate-700 dark:text-slate-300"
-                >
-                  {formatDateTime(task.createdAt)}
-                </time>
-              </dd>
-            </div>
-          )}
-        </dl>
-
-        {/* Metadata */}
-        <div className="mt-auto flex flex-wrap gap-2 pt-4">
           {chips.map((chip) => (
             <span
               key={chip.text}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium ${neutralTag}`}
             >
               <Icon
                 name={chip.icon}
@@ -774,13 +766,122 @@ function TaskCard({ task }: { task: Task }) {
             </span>
           ))}
         </div>
+
+        {/* Judul dan deskripsi. Teks panjang dipotong di 2 baris;
+            teks lengkap tetap ada di tooltip dan halaman detail. */}
+        <h3
+          title={task.title}
+          className={`mt-3 line-clamp-2 text-lg font-bold leading-snug tracking-tight ${textHeading}`}
+        >
+          <Link
+            href={detailHref}
+            className={`rounded transition-colors hover:text-emerald-700 dark:hover:text-emerald-300 ${focusRing}`}
+          >
+            {task.title}
+          </Link>
+        </h3>
+        {task.description && (
+          <p className={`mt-1.5 line-clamp-2 text-sm leading-6 ${textMuted}`}>
+            {task.description}
+          </p>
+        )}
+
+        {/* Panel info, menempel di bawah isi supaya sejajar antar-kartu.
+            Mobile: label di kiri, nilai di kanan. sm ke atas: dua kolom
+            berdampingan, label di atas nilai. Baris tautan ada di dasar panel. */}
+        <div className="mt-auto pt-4">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50/70 text-xs dark:border-slate-800 dark:bg-slate-950/40">
+            <dl className="grid divide-y divide-slate-200 sm:grid-cols-2 sm:divide-x sm:divide-y-0 dark:divide-slate-800">
+              <div className="flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 sm:flex-col sm:items-start sm:justify-start sm:gap-1">
+                <dt
+                  className={`inline-flex shrink-0 items-center gap-1.5 font-medium ${textMuted}`}
+                >
+                  <Icon
+                    name="calendar"
+                    className="h-3.5 w-3.5 text-slate-500"
+                  />
+                  Batas pengumpulan
+                </dt>
+                <dd className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1 text-right sm:justify-start sm:text-left">
+                  {task.deadline ? (
+                    <>
+                      <time
+                        dateTime={task.deadline}
+                        className="font-semibold tabular-nums text-slate-800 dark:text-slate-100"
+                      >
+                        {formatDate(task.deadline)}
+                      </time>
+                      <DeadlineHint deadline={task.deadline} />
+                    </>
+                  ) : (
+                    <span className={textMuted}>Belum ditentukan</span>
+                  )}
+                </dd>
+              </div>
+
+              {task.createdAt && (
+                <div className="flex min-w-0 items-center justify-between gap-3 px-3 py-2.5 sm:flex-col sm:items-start sm:justify-start sm:gap-1">
+                  <dt
+                    className={`inline-flex shrink-0 items-center gap-1.5 font-medium ${textMuted}`}
+                  >
+                    <Icon
+                      name="clock"
+                      className="h-3.5 w-3.5 text-slate-500"
+                    />
+                    Dipublikasikan
+                  </dt>
+                  <dd>
+                    <time
+                      dateTime={task.createdAt}
+                      className="font-medium tabular-nums text-slate-700 dark:text-slate-300"
+                    >
+                      {formatDateTime(task.createdAt)}
+                    </time>
+                  </dd>
+                </div>
+              )}
+            </dl>
+
+            {/* Tautan: bagian dari kartu, bisa diklik, buka di tab baru */}
+            {task.linkUrl && (
+              <a
+                href={task.linkUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={task.linkUrl}
+                aria-label={`Buka tautan ${linkHost} (tab baru): ${task.title}`}
+                className={`group/link flex items-center gap-3 border-t border-slate-200 bg-white px-3 py-2.5 transition duration-200 hover:bg-emerald-50 dark:border-slate-800 dark:bg-slate-900 dark:hover:bg-emerald-500/10 ${focusRing} focus-visible:ring-inset`}
+              >
+                <span
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${brandTint}`}
+                >
+                  <Icon name="link" className="h-4 w-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={`block font-medium ${textMuted}`}>
+                    Tautan
+                  </span>
+                  <span
+                    className={`block truncate text-sm font-semibold group-hover/link:underline ${brandLink}`}
+                  >
+                    {linkLabel}
+                  </span>
+                </span>
+                <Icon
+                  name="external"
+                  className="h-4 w-4 shrink-0 text-slate-500 transition duration-200 group-hover/link:-translate-y-0.5 group-hover/link:translate-x-0.5 group-hover/link:text-emerald-700 dark:text-slate-400 dark:group-hover/link:text-emerald-300"
+                />
+              </a>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Aksi */}
-      <div className="flex gap-2.5 border-t border-slate-200 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/40 sm:p-4">
+      <div className={ACTION_CELL}>
         <Link
-          href={`/tugas/${task.id}`}
-          className={`group/btn inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition duration-200 hover:shadow-md hover:shadow-emerald-700/25 active:scale-[0.97] ${brandSolid} ${focusRing}`}
+          href={detailHref}
+          className={`group/btn inline-flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-sm font-semibold transition duration-200 hover:shadow-md hover:shadow-emerald-700/25 active:scale-[0.97] sm:flex-none sm:px-6 ${brandSolid} ${focusRing}`}
         >
           <Icon
             name="eye"
@@ -794,7 +895,7 @@ function TaskCard({ task }: { task: Task }) {
             href={task.fileUrl}
             download
             aria-label={`Unduh berkas: ${task.title}`}
-            className={`group/btn px-4 ${btnShape} ${btnNeutral} ${hoverBrand} ${focusRing}`}
+            className={`group/btn px-4 sm:px-6 ${btnShape} ${btnNeutral} ${hoverBrand} ${focusRing}`}
           >
             <Icon
               name="download"
@@ -807,26 +908,11 @@ function TaskCard({ task }: { task: Task }) {
             type="button"
             disabled
             title="Berkas belum tersedia"
-            className={`px-4 ${btnShape} ${btnNeutral} ${btnDisabled}`}
+            className={`px-4 sm:px-6 ${btnShape} ${btnNeutral} ${btnDisabled}`}
           >
             <Icon name="download" />
             Unduh
           </button>
-        )}
-        {task.linkUrl && (
-          <a
-            href={task.linkUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Buka tautan ${linkHost} (tab baru): ${task.title}`}
-            title={`Buka ${linkHost}`}
-            className={`group/btn w-11 shrink-0 ${btnShape} ${btnNeutral} ${hoverBrand} ${focusRing}`}
-          >
-            <Icon
-              name="external"
-              className="h-4 w-4 transition duration-200 group-hover/btn:-translate-y-0.5 group-hover/btn:translate-x-0.5"
-            />
-          </a>
         )}
       </div>
     </article>
@@ -837,25 +923,28 @@ function TaskSkeleton() {
   return (
     <div
       aria-hidden="true"
-      className={`${surface} animate-pulse overflow-hidden rounded-2xl shadow-sm`}
+      className={`${surface} ${CARD_LAYOUT} animate-pulse overflow-hidden rounded-2xl shadow-sm`}
     >
-      <div className="aspect-[16/9] border-b border-slate-200 bg-slate-100 dark:border-slate-800 dark:bg-slate-800" />
-      <div className="p-4 sm:p-5">
+      <div className={COVER_CELL}>
+        <div className="aspect-[16/9] rounded-xl bg-slate-100 dark:bg-slate-800" />
+      </div>
+
+      <div className="flex min-w-0 flex-col px-4 pb-4 pt-2 sm:p-5">
         <div className="flex gap-2">
           <div className="h-6 w-28 rounded-md bg-slate-200 dark:bg-slate-700" />
+          <div className="h-6 w-16 rounded-md bg-slate-100 dark:bg-slate-800" />
         </div>
-        <div className="mt-5 h-5 w-3/4 rounded bg-slate-200 dark:bg-slate-700" />
+        <div className="mt-4 h-5 w-3/4 rounded bg-slate-200 dark:bg-slate-700" />
         <div className="mt-3 h-3.5 w-full rounded bg-slate-100 dark:bg-slate-800" />
         <div className="mt-2 h-3.5 w-2/3 rounded bg-slate-100 dark:bg-slate-800" />
-        <div className="mt-4 h-[5.25rem] w-full rounded-xl bg-slate-100 dark:bg-slate-800" />
-        <div className="mt-4 flex gap-2">
-          <div className="h-7 w-20 rounded-lg bg-slate-100 dark:bg-slate-800" />
-          <div className="h-7 w-20 rounded-lg bg-slate-100 dark:bg-slate-800" />
+        <div className="mt-auto pt-4">
+          <div className="h-14 w-full rounded-xl bg-slate-100 dark:bg-slate-800" />
         </div>
       </div>
-      <div className="flex gap-2.5 border-t border-slate-200 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/40 sm:p-4">
-        <div className="h-11 flex-1 rounded-xl bg-slate-200 dark:bg-slate-700" />
-        <div className="h-11 w-24 rounded-xl bg-slate-100 dark:bg-slate-800" />
+
+      <div className={ACTION_CELL}>
+        <div className="h-11 w-32 rounded-xl bg-slate-200 lg:w-full dark:bg-slate-700" />
+        <div className="h-11 w-24 rounded-xl bg-slate-100 lg:w-full dark:bg-slate-800" />
       </div>
     </div>
   );
@@ -916,7 +1005,10 @@ export default function Home() {
           semester: `Semester ${item.semester}`,
           deadline: item.deadline ?? "",
           createdAt: item.created_at,
-          description: item.description ?? "",
+          // Deskripsi yang disembunyikan lewat saklar di panel admin tidak
+          // ikut tampil, dan juga tidak ikut dicari
+          description:
+            item.show_description === false ? "" : (item.description ?? ""),
           workType: item.work_type === "group" ? "group" : "individual",
           status: DEFAULT_STATUS,
           fileType: urls ? getFileExtension(item.document_name) : undefined,
@@ -1057,9 +1149,9 @@ export default function Home() {
       : `Menampilkan ${filteredTasks.length}${hasActiveFilters ? ` dari ${tasks.length}` : ""
       } tugas`;
 
-  // Grid kartu: 1 kolom di mobile, 2 di tablet, 3 di desktop
-  const cardGrid =
-    "grid grid-cols-1 gap-4 sm:gap-5 md:grid-cols-2 xl:grid-cols-3";
+  // Daftar tugas: satu tugas per baris, bertumpuk ke bawah. Susunan di dalam
+  // kartu diatur oleh CARD_LAYOUT.
+  const cardList = "flex flex-col gap-4 sm:gap-5";
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 text-slate-800 transition-colors selection:bg-emerald-200 selection:text-emerald-950 dark:bg-slate-950 dark:text-slate-200 dark:selection:bg-emerald-500/30 dark:selection:text-emerald-50">
@@ -1131,15 +1223,15 @@ export default function Home() {
                 <Icon
                   name="sun"
                   className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${dark
-                    ? "rotate-0 scale-100 opacity-100"
-                    : "-rotate-90 scale-0 opacity-0"
+                      ? "rotate-0 scale-100 opacity-100"
+                      : "-rotate-90 scale-0 opacity-0"
                     }`}
                 />
                 <Icon
                   name="moon"
                   className={`absolute inset-0 h-[18px] w-[18px] transition-all duration-500 ${dark
-                    ? "rotate-90 scale-0 opacity-0"
-                    : "rotate-0 scale-100 opacity-100"
+                      ? "rotate-90 scale-0 opacity-0"
+                      : "rotate-0 scale-100 opacity-100"
                     }`}
                 />
               </span>
@@ -1355,8 +1447,8 @@ export default function Home() {
                     aria-expanded={filtersOpen}
                     aria-controls="panel-filter"
                     className={`shrink-0 px-3.5 lg:hidden ${btnShape} ${filtersOpen || activeFilters > 0
-                      ? btnBrandOn
-                      : `${btnNeutral} ${hoverBrand}`
+                        ? btnBrandOn
+                        : `${btnNeutral} ${hoverBrand}`
                       } ${focusRing}`}
                   >
                     <Icon name="sliders" />
@@ -1378,8 +1470,8 @@ export default function Home() {
               <div
                 id="panel-filter"
                 className={`grid transition-[grid-template-rows,visibility] duration-300 ease-out lg:contents ${filtersOpen
-                  ? "visible grid-rows-[1fr]"
-                  : "invisible grid-rows-[0fr]"
+                    ? "visible grid-rows-[1fr]"
+                    : "invisible grid-rows-[0fr]"
                   } lg:visible`}
               >
                 <div className="-mx-1 min-h-0 overflow-hidden px-1 pb-1 lg:contents">
@@ -1431,7 +1523,7 @@ export default function Home() {
 
           <div className="mt-5 sm:mt-6">
             {loading ? (
-              <div aria-busy="true" className={cardGrid}>
+              <div aria-busy="true" className={cardList}>
                 {[0, 1, 2].map((i) => (
                   <TaskSkeleton key={i} />
                 ))}
@@ -1461,13 +1553,9 @@ export default function Home() {
             ) : filteredTasks.length > 0 ? (
               // Key berubah saat filter atau urutan diganti, jadi kartu masuk
               // ulang berurutan. Mengetik di pencarian tidak memicunya.
-              <div key={`${semester}|${course}|${sort}`} className={cardGrid}>
+              <div key={`${semester}|${course}|${sort}`} className={cardList}>
                 {filteredTasks.map((task, index) => (
-                  <Reveal
-                    key={task.id}
-                    className="h-full"
-                    delayMs={Math.min(index, 8) * 70}
-                  >
+                  <Reveal key={task.id} delayMs={Math.min(index, 8) * 70}>
                     <TaskCard task={task} />
                   </Reveal>
                 ))}
@@ -1507,7 +1595,9 @@ export default function Home() {
 
       {/* ───── FOOTER (latar selebar layar, isi sejajar dengan konten) ───── */}
       <footer className="w-full border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950">
-        <div className={`${CONTAINER} py-6 text-center text-xs sm:text-left ${textMuted}`}>
+        <div
+          className={`${CONTAINER} py-6 text-center text-xs sm:text-left ${textMuted}`}
+        >
           <p>© 2026 {profile.name}. All rights reserved.</p>
         </div>
       </footer>
@@ -1525,8 +1615,8 @@ export default function Home() {
         aria-hidden={!showTop}
         tabIndex={showTop ? 0 : -1}
         className={`fixed bottom-5 right-4 z-40 flex h-11 w-11 items-center justify-center rounded-full shadow-lg shadow-emerald-900/25 transition-all duration-300 hover:-translate-y-1 active:scale-90 sm:bottom-6 sm:right-6 ${brandSolid} ${focusRing} ${showTop
-          ? "translate-y-0 opacity-100"
-          : "pointer-events-none translate-y-4 opacity-0"
+            ? "translate-y-0 opacity-100"
+            : "pointer-events-none translate-y-4 opacity-0"
           }`}
       >
         <Icon name="chevron" className="h-5 w-5 rotate-180" />

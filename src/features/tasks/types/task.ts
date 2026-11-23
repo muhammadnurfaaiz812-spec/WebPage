@@ -14,6 +14,7 @@ export interface Task {
     title: string;
         description: string | null;
     content: string | null;
+    content_title: string | null;
     show_description: boolean;
     show_content: boolean;
     link_url: string | null;

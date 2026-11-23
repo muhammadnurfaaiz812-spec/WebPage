@@ -41,6 +41,7 @@ export type TaskInput = Pick<
   | "status"
   | "work_type"
   | "content"
+  | "content_title"
   | "show_description"
   | "show_content"
   | "link_url"
@@ -48,8 +49,8 @@ export type TaskInput = Pick<
 
 const TASK_SELECT = `
   id, course_id, title, description, semester, academic_year, deadline,
-  status, work_type, content, show_description, show_content, link_url,
-  document_name, document_path, thumbnail_path, created_at,
+  status, work_type, content, content_title, show_description, show_content,
+  link_url, document_name, document_path, thumbnail_path, created_at,
   courses ( name )
 `;
 
@@ -102,6 +103,16 @@ async function removeFiles(paths: string[]) {
   if (own.length === 0) return;
   const { error } = await supabase.storage.from(DOCUMENT_BUCKET).remove(own);
   if (error) console.error("Gagal menghapus berkas:", error.message);
+}
+
+/**
+ * Apakah path gambar sampul ini dipilih sendiri oleh admin?
+ * Sampul pilihan admin disimpan sebagai "<id>/cover-<waktu>.jpg"; gambar
+ * otomatis dari berkas memakai "preview-". Awalan itu yang membedakannya,
+ * jadi sampul manual tidak ikut terhapus saat berkasnya diganti.
+ */
+export function isManualCover(path: string | null | undefined) {
+  return Boolean(path && /\/cover-\d+\.jpg$/.test(path));
 }
 
 /* ────────────────────────────────────────────────────────────
@@ -215,22 +226,36 @@ export async function deleteTask(task: Task) {
 
 /**
  * Simpan tugas baru atau perubahan. Urutannya sengaja: unggah berkas dan
- * pratinjau baru, simpan baris, lalu hapus yang lama. Kalau ada langkah yang
- * gagal, unggahan baru dibersihkan supaya tidak ada berkas yatim.
+ * gambar sampul baru, simpan baris, lalu hapus yang lama. Kalau ada langkah
+ * yang gagal, unggahan baru dibersihkan supaya tidak ada berkas yatim.
  *
- * Berkas disimpan di "<task_id>/<nama-aman>", pratinjau di
- * "<task_id>/preview-<waktu>.jpg" (nama unik supaya cache tidak menampilkan
- * gambar lama). Path itu dicatat di document_path dan thumbnail_path, tanpa
- * nama bucket.
+ * Berkas disimpan di "<task_id>/<nama-aman>". Gambar sampul disimpan di
+ * "<task_id>/preview-<waktu>.jpg" (dibuat otomatis dari berkas) atau
+ * "<task_id>/cover-<waktu>.jpg" (dipilih admin); nama unik supaya cache tidak
+ * menampilkan gambar lama. Path itu dicatat di document_path dan
+ * thumbnail_path, tanpa nama bucket.
+ *
+ * Saat berkas diganti atau dihapus, gambar otomatis lama dibuang, tetapi
+ * sampul pilihan admin dipertahankan (lihat isManualCover).
  */
 export async function saveTask(args: {
   input: TaskInput;
   previous: Task | null; // null = tugas baru
   newFile: File | null;
   removeFile: boolean;
-  newPreview: Blob | null; // JPEG pratinjau, dibuat di browser dari PDF
+  newPreview: Blob | null; // JPEG gambar sampul, dibuat di browser
+  newPreviewManual?: boolean; // true = gambar sampul pilihan admin
+  removeThumbnail?: boolean; // hapus gambar sampul saja, berkas tetap
 }) {
-  const { input, previous, newFile, removeFile, newPreview } = args;
+  const {
+    input,
+    previous,
+    newFile,
+    removeFile,
+    newPreview,
+    newPreviewManual = false,
+    removeThumbnail = false,
+  } = args;
 
   const oldPath = previous?.document_path ?? null;
   const oldThumb = previous?.thumbnail_path ?? null;
@@ -240,8 +265,12 @@ export async function saveTask(args: {
   let uploadedPath: string | null = null;
   let uploadedThumb: string | null = null;
 
-  // Berkas diganti atau dihapus: pratinjau lama tidak berlaku lagi
-  if (newFile || removeFile) thumbnail_path = null;
+  // Berkas diganti atau dihapus: gambar otomatis lama tidak berlaku lagi.
+  // Sampul pilihan admin tetap dipakai. Admin juga bisa menghapus sampul saja.
+  if ((newFile || removeFile) && !isManualCover(oldThumb)) {
+    thumbnail_path = null;
+  }
+  if (removeThumbnail) thumbnail_path = null;
 
   try {
     if (newFile) {
@@ -263,7 +292,7 @@ export async function saveTask(args: {
     }
 
     if (newPreview) {
-      const path = `${input.id}/preview-${Date.now()}.jpg`;
+      const path = `${input.id}/${newPreviewManual ? "cover" : "preview"}-${Date.now()}.jpg`;
       const { error } = await supabase.storage
         .from(DOCUMENT_BUCKET)
         .upload(path, newPreview, {
@@ -271,7 +300,7 @@ export async function saveTask(args: {
           contentType: "image/jpeg",
         });
       if (error) {
-        fail("Gagal mengunggah pratinjau (apakah migrasi pratinjau sudah dijalankan?)", error);
+        fail("Gagal mengunggah gambar sampul (apakah migrasi pratinjau sudah dijalankan?)", error);
       }
       uploadedThumb = path;
       thumbnail_path = path;

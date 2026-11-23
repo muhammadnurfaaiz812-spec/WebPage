@@ -807,6 +807,9 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
   const content =
     task.show_content !== false ? task.content?.trim() || null : null;
 
+  // Judul bagian isi posting: diisi admin, atau "Jawaban" kalau dikosongkan
+  const contentTitle = task.content_title?.trim() || "Soal dan Jawaban";
+
   // Tata letak menyesuaikan isi: kolom kiri hanya ada kalau ada sesuatu di sana
   const hasBody = Boolean(description || content);
   const hasLeft = hasBody || related.length > 0;
@@ -953,7 +956,7 @@ function TaskDetail({ task, related }: { task: Task; related: Task[] }) {
                   id="judul-jawaban"
                   className={`text-xl font-extrabold tracking-tight ${textHeading}`}
                 >
-                  Jawaban
+                  {contentTitle}
                 </h2>
                 <div
                   className={`${surface} mt-3 rounded-2xl p-5 shadow-sm sm:p-6`}

@@ -24,6 +24,7 @@ import {
   FILE_EXTENSIONS,
   MAX_FILE_BYTES,
   createCourse,
+  isManualCover,
   listCourses,
   saveTask,
   type Course,
@@ -122,13 +123,26 @@ function relativeDay(iso: string) {
 const MAX_MB = Math.round(MAX_FILE_BYTES / 1024 / 1024);
 const TITLE_MAX = 200;
 
+// Judul bagian isi posting di halaman detail. Kalau kolomnya dikosongkan,
+// halaman detail memakai judul bawaan ini.
+const CONTENT_TITLE_MAX = 100;
+const DEFAULT_CONTENT_TITLE = "Jawaban";
+
+// Gambar sampul pilihan sendiri (di luar gambar otomatis dari berkas)
+const COVER_EXTENSIONS = [".jpg", ".jpeg", ".png", ".webp", ".gif"];
+const COVER_MAX_BYTES = 10 * 1024 * 1024;
+const COVER_MAX_MB = Math.round(COVER_MAX_BYTES / 1024 / 1024);
+
 const FILE_TYPES_HELP =
   "PDF, gambar (JPG, PNG, WebP, GIF), Word, PowerPoint, Excel, ZIP, atau TXT.";
 
 // Pratinjau otomatis hanya untuk PDF dan gambar; jenis lain tidak bisa
 // dirender di browser, jadi kartunya memakai sampul pengganti.
 const NO_PREVIEW_NOTE =
-  "Pratinjau otomatis tersedia untuk PDF dan gambar (JPG, PNG, WebP, GIF). Kartu akan tampil tanpa gambar.";
+  "Pratinjau otomatis hanya tersedia untuk PDF dan gambar (JPG, PNG, WebP, GIF). Unggah gambar sendiri kalau ingin kartu punya gambar.";
+
+const NO_COVER_NOTE =
+  "Kartu akan memakai sampul pengganti berisi ikon berkas. Unggah gambar sendiri untuk menggantinya.";
 
 const STATUS_OPTIONS: {
   value: TaskStatus;
@@ -541,7 +555,16 @@ function SelectInput({
   );
 }
 
-/** Kartu berkas: gambar pratinjau di kiri, nama dan aksi di kanan. */
+/** Ubin berisi ikon, untuk gambar kecil di kartu yang belum punya gambar. */
+function TilePlaceholder({ icon }: { icon: IconName }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 text-emerald-700 dark:from-emerald-500/10 dark:to-slate-800 dark:text-emerald-300">
+      <Icon name={icon} size="h-8 w-8" />
+    </div>
+  );
+}
+
+/** Kartu berkas: gambar kecil di kiri, nama dan aksi di kanan. */
 function FileCard({
   thumb,
   name,
@@ -591,11 +614,22 @@ function FileCard({
 const DISK_TEMPLATE =
   "## Soal\n\nTulis soal di sini.\n\n## Jawaban\n\n```disk\nhead: 50\ntrack: 200\nantrean: 52, 170, 83, 170, 24, 16, 190, 6, 67, 83, 152, 24, 71, 111, 83, 123\narah: naik\nlompatan: hitung\nscan: ujung\n```\n";
 
+// Kerangka siap pakai untuk soal CPU Scheduling (FCFS, SJF, SRTF, Round Robin, dst.)
+const CPU_TEMPLATE =
+  "## Soal\n\nTulis soal di sini.\n\n## Jawaban\n\n```cpu\nproses: A 0 6, B 3 8, C 5 4, D 8 7, E 12 5\nkuantum: 3, 5\nrr: tiba-dulu\n```\n";
+
+// Daftar template yang bisa disisipkan ke isi posting
+const CONTENT_TEMPLATES = [
+  ["Disk Scheduling", DISK_TEMPLATE],
+  ["CPU Scheduling", CPU_TEMPLATE],
+] as const;
+
 export default function TaskForm({ task }: { task?: Task }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const fileInputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const coverInputRef = useRef<HTMLInputElement>(null);
   const courseNameRef = useRef<HTMLInputElement>(null);
 
   // Id dibuat di sisi klien agar berkas bisa diunggah ke "<id>/..." sebelum baris disimpan
@@ -604,6 +638,7 @@ export default function TaskForm({ task }: { task?: Task }) {
   const [courseId, setCourseId] = useState(task?.course_id ?? "");
   const [description, setDescription] = useState(task?.description ?? "");
   const [content, setContent] = useState(task?.content ?? "");
+  const [contentTitle, setContentTitle] = useState(task?.content_title ?? "");
   const [contentPreview, setContentPreview] = useState(false);
   const [showDescription, setShowDescription] = useState(
     task?.show_description ?? true
@@ -627,6 +662,7 @@ export default function TaskForm({ task }: { task?: Task }) {
     courseId: task?.course_id ?? "",
     description: task?.description ?? "",
     content: task?.content ?? "",
+    contentTitle: task?.content_title ?? "",
     showDescription: task?.show_description ?? true,
     showContent: task?.show_content ?? true,
     linkUrl: task?.link_url ?? "",
@@ -643,13 +679,18 @@ export default function TaskForm({ task }: { task?: Task }) {
   const [fileError, setFileError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
 
-  // Pratinjau baru yang akan diunggah (JPEG dari halaman 1 PDF atau dari gambar)
+  // Gambar sampul kartu. "preview" adalah gambar baru yang menunggu diunggah:
+  // hasil otomatis dari berkas (halaman 1 PDF atau gambar) atau pilihan sendiri.
   const [preview, setPreview] = useState<{ blob: Blob; url: string } | null>(
     null
   );
   const [previewBusy, setPreviewBusy] = useState(false);
   const [previewNote, setPreviewNote] = useState<string | null>(null);
   const previewRun = useRef(0); // mengabaikan hasil render yang sudah usang
+  const [manualCover, setManualCover] = useState(false); // "preview" dipilih sendiri
+  const [coverName, setCoverName] = useState<string | null>(null);
+  const [removeCover, setRemoveCover] = useState(false); // hapus sampul tersimpan
+  const [coverError, setCoverError] = useState<string | null>(null);
 
   const [courses, setCourses] = useState<Course[]>([]);
   const [coursesLoading, setCoursesLoading] = useState(true);
@@ -668,9 +709,20 @@ export default function TaskForm({ task }: { task?: Task }) {
   // "pdf", "image", atau null kalau berkas saat ini tidak bisa dibuatkan pratinjau
   const currentKind = getPreviewKind(currentFile);
 
+  // Sampul tersimpan yang dipilih sendiri tidak ditimpa gambar otomatis dari berkas
+  const storedCoverManual = isManualCover(task?.thumbnail_path);
+  const lockCover = manualCover || (storedCoverManual && !removeCover);
+
+  // Sampul tersimpan yang masih berlaku setelah disimpan: hilang kalau
+  // dihapus, dan sampul otomatis juga hilang kalau berkasnya diganti atau dihapus
+  const storedCoverKept =
+    Boolean(currentThumbUrl) &&
+    !removeCover &&
+    (storedCoverManual || (!file && !removeFile));
+
   // Gambar yang akan tampil di kartu setelah disimpan
   const shownPreview =
-    preview?.url ?? (file || removeFile ? undefined : currentThumbUrl);
+    preview?.url ?? (storedCoverKept ? currentThumbUrl : undefined);
   const canRegenerate =
     Boolean(task) &&
     currentKind !== null &&
@@ -746,6 +798,7 @@ export default function TaskForm({ task }: { task?: Task }) {
     courseId !== initial.courseId ||
     description !== initial.description ||
     content !== initial.content ||
+    contentTitle !== initial.contentTitle ||
     showDescription !== initial.showDescription ||
     showContent !== initial.showContent ||
     linkUrl !== initial.linkUrl ||
@@ -755,7 +808,9 @@ export default function TaskForm({ task }: { task?: Task }) {
     status !== initial.status ||
     workType !== initial.workType ||
     Boolean(file) ||
-    removeFile;
+    removeFile ||
+    removeCover ||
+    Boolean(preview);
 
   const submitLabel = task
     ? "Simpan perubahan"
@@ -823,16 +878,23 @@ export default function TaskForm({ task }: { task?: Task }) {
     });
   }
 
+  // Membatalkan berkas baru. Gambar sampul pilihan sendiri tetap dipertahankan.
   function clearPickedFile() {
     setFile(null);
     setFileInputKey((key) => key + 1);
-    previewRun.current++;
-    setPreview(null);
-    setPreviewBusy(false);
-    setPreviewNote(null);
+    if (!manualCover) {
+      previewRun.current++;
+      setPreview(null);
+      setPreviewBusy(false);
+      setPreviewNote(null);
+    }
   }
 
-  async function buildPreview(source: Blob, kind: PreviewKind) {
+  // Mengembalikan false kalau gambar gagal dibuat (dan hasilnya masih berlaku)
+  async function buildPreview(
+    source: Blob,
+    kind: PreviewKind
+  ): Promise<boolean> {
     const run = ++previewRun.current;
     setPreviewBusy(true);
     setPreview(null);
@@ -841,13 +903,17 @@ export default function TaskForm({ task }: { task?: Task }) {
       const blob = await renderFilePreview(source, kind);
       if (run === previewRun.current) {
         setPreview({ blob, url: URL.createObjectURL(blob) });
+        setRemoveCover(false); // gambar baru menggantikan sampul yang tadinya dihapus
       }
+      return true;
     } catch (err) {
       if (run === previewRun.current) {
         setPreviewNote(
           `Pratinjau gagal dibuat: ${errorMessage(err, "kesalahan tidak dikenal")}. Tugas tetap bisa disimpan tanpa gambar.`
         );
+        return false;
       }
+      return true;
     } finally {
       if (run === previewRun.current) setPreviewBusy(false);
     }
@@ -896,6 +962,9 @@ export default function TaskForm({ task }: { task?: Task }) {
     setFile(picked);
     setRemoveFile(false);
 
+    // Sampul pilihan sendiri (baru atau tersimpan) tidak ditimpa gambar otomatis
+    if (lockCover) return;
+
     const kind = getPreviewKind(picked.name);
     if (kind) {
       void buildPreview(picked, kind);
@@ -933,6 +1002,73 @@ export default function TaskForm({ task }: { task?: Task }) {
 
   function openFilePicker() {
     fileInputRef.current?.click();
+  }
+
+  /* ── Gambar sampul pilihan sendiri ── */
+
+  async function processCover(picked: File) {
+    const dot = picked.name.lastIndexOf(".");
+    const ext = dot >= 0 ? picked.name.slice(dot).toLowerCase() : "";
+
+    if (!COVER_EXTENSIONS.includes(ext)) {
+      setCoverError(
+        `Format gambar tidak didukung. Gunakan ${COVER_EXTENSIONS.join(", ")}.`
+      );
+      return;
+    }
+    if (picked.size > COVER_MAX_BYTES) {
+      setCoverError(
+        `Gambar terlalu besar (${formatSize(picked.size)}). Maksimal ${COVER_MAX_MB} MB.`
+      );
+      return;
+    }
+    setCoverError(null);
+    setManualCover(true);
+    setCoverName(picked.name);
+
+    // Diubah ke JPEG dengan jalur yang sama seperti pratinjau otomatis
+    const ok = await buildPreview(picked, "image");
+    if (!ok) {
+      setManualCover(false);
+      setCoverName(null);
+    }
+  }
+
+  function handleCoverInput(e: ChangeEvent<HTMLInputElement>) {
+    const picked = e.target.files?.[0];
+    e.target.value = ""; // supaya memilih gambar yang sama lagi tetap terdeteksi
+    if (picked) void processCover(picked);
+  }
+
+  function openCoverPicker() {
+    coverInputRef.current?.click();
+  }
+
+  // Batalkan gambar pilihan sendiri yang belum disimpan
+  function cancelManualCover() {
+    previewRun.current++;
+    setPreview(null);
+    setPreviewBusy(false);
+    setPreviewNote(null);
+    setManualCover(false);
+    setCoverName(null);
+    setCoverError(null);
+
+    // Kembali ke gambar otomatis dari berkas yang baru dipilih, kalau ada
+    const kind = file ? getPreviewKind(file.name) : null;
+    if (file && kind && !(storedCoverManual && !removeCover)) {
+      void buildPreview(file, kind);
+    }
+  }
+
+  // Hapus sampul yang sudah tersimpan (tanpa menghapus berkas)
+  function removeStoredCover() {
+    setRemoveCover(true);
+    setCoverError(null);
+
+    // Berkas baru yang menunggu disimpan boleh menghasilkan gambar otomatis lagi
+    const kind = file ? getPreviewKind(file.name) : null;
+    if (file && kind) void buildPreview(file, kind);
   }
 
   async function handleAddCourse() {
@@ -1017,6 +1153,7 @@ export default function TaskForm({ task }: { task?: Task }) {
           title: trimmedTitle,
           description: description.trim() || null,
           content: content.trim() || null,
+          content_title: contentTitle.trim() || null,
           show_description: showDescription,
           show_content: showContent,
           link_url: link || null,
@@ -1030,6 +1167,8 @@ export default function TaskForm({ task }: { task?: Task }) {
         newFile: file,
         removeFile,
         newPreview: preview?.blob ?? null,
+        newPreviewManual: manualCover && Boolean(preview),
+        removeThumbnail: removeCover && !preview,
       });
       router.push("/admin");
     } catch (err) {
@@ -1038,9 +1177,11 @@ export default function TaskForm({ task }: { task?: Task }) {
     }
   }
 
-  /* ── Gambar kecil di kartu berkas ── */
-  const activeName = file?.name ?? currentFile;
-  const thumbNode = previewBusy ? (
+  /* ── Kartu gambar sampul ── */
+  const coverIsManual = preview ? manualCover : storedCoverManual;
+  const coverRemoved = removeCover && Boolean(currentThumbUrl) && !preview;
+
+  const coverThumb = previewBusy ? (
     <div
       role="status"
       aria-label="Membuat pratinjau"
@@ -1050,26 +1191,45 @@ export default function TaskForm({ task }: { task?: Task }) {
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={shownPreview}
-      alt="Pratinjau berkas di kartu tugas"
+      alt="Pratinjau gambar sampul di kartu tugas"
       className="h-full w-full object-cover object-top"
     />
   ) : (
-    <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-emerald-50 to-slate-100 text-emerald-700 dark:from-emerald-500/10 dark:to-slate-800 dark:text-emerald-300">
-      <Icon
-        name={getPreviewKind(activeName) === "image" ? "image" : "file"}
-        size="h-8 w-8"
-      />
-    </div>
+    <TilePlaceholder icon="image" />
   );
 
-  const previewMessage = previewBusy
-    ? "Membuat pratinjau..."
+  const coverBadge = shownPreview
+    ? coverIsManual
+      ? "Manual"
+      : "Otomatis"
+    : undefined;
+
+  const coverMeta = previewBusy
+    ? "Memproses gambar..."
     : shownPreview
-      ? "Gambar ini akan tampil di kartu tugas."
-      : (previewNote ??
-        (currentKind && !file
-          ? "Berkas ini belum punya pratinjau."
-          : NO_PREVIEW_NOTE));
+      ? coverIsManual
+        ? preview && coverName
+          ? `Gambar pilihan sendiri • ${coverName}`
+          : "Gambar pilihan sendiri"
+        : "Dibuat otomatis dari berkas"
+      : "Belum ada gambar";
+
+  const coverMessage = previewBusy
+    ? "Membuat pratinjau..."
+    : coverRemoved
+      ? "Gambar sampul saat ini akan dihapus saat disimpan."
+      : shownPreview
+        ? "Gambar ini akan tampil di bagian atas kartu tugas."
+        : (previewNote ??
+          (currentKind && !file
+            ? "Berkas ini belum punya gambar. Buat otomatis dari berkas, atau unggah gambar sendiri."
+            : NO_COVER_NOTE));
+
+  const coverPickLabel = !shownPreview
+    ? "Unggah gambar"
+    : coverIsManual
+      ? "Ganti"
+      : "Pakai gambar sendiri";
 
   /* ── Area seret-lepas ── */
   const dropzone = (
@@ -1279,13 +1439,31 @@ export default function TaskForm({ task }: { task?: Task }) {
               </Field>
 
               <Field
+                id="judul-posting"
+                label="Judul isi posting"
+                counter={`${contentTitle.length}/${CONTENT_TITLE_MAX}`}
+                hint={`Judul bagian isi posting di halaman detail. Kosongkan untuk memakai “${DEFAULT_CONTENT_TITLE}”.`}
+              >
+                <input
+                  id="judul-posting"
+                  type="text"
+                  value={contentTitle}
+                  onChange={(e) => setContentTitle(e.target.value)}
+                  maxLength={CONTENT_TITLE_MAX}
+                  placeholder={DEFAULT_CONTENT_TITLE}
+                  aria-describedby="judul-posting-hint"
+                  className={field}
+                />
+              </Field>
+
+              <Field
                 id="isi-posting"
                 label="Isi posting (opsional)"
                 hint={
                   <>
                     Mendukung Markdown: judul <code>##</code>, tabel, daftar, dan gambar.
-                    Blok <code>```disk</code> membuat tabel dan grafik Disk Scheduling
-                    otomatis dari data soal.
+                    Blok <code>```disk</code> atau <code>```cpu</code> membuat tabel dan
+                    diagram otomatis dari data soal.
                   </>
                 }
                 action={
@@ -1303,34 +1481,39 @@ export default function TaskForm({ task }: { task?: Task }) {
                     aria-label="Mode isi posting"
                     className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 dark:border-slate-700 dark:bg-slate-800"
                   >
-                    {([false, true] as const).map((preview) => (
+                    {([false, true] as const).map((previewMode) => (
                       <button
-                        key={String(preview)}
+                        key={String(previewMode)}
                         type="button"
-                        aria-pressed={contentPreview === preview}
-                        onClick={() => setContentPreview(preview)}
-                        className={`rounded-md px-3 py-1 text-xs font-semibold transition ${contentPreview === preview
+                        aria-pressed={contentPreview === previewMode}
+                        onClick={() => setContentPreview(previewMode)}
+                        className={`rounded-md px-3 py-1 text-xs font-semibold transition ${contentPreview === previewMode
                             ? "bg-white text-emerald-800 shadow-sm dark:bg-slate-900 dark:text-emerald-300"
                             : "text-slate-600 hover:text-emerald-800 dark:text-slate-400 dark:hover:text-emerald-300"
                           }`}
                       >
-                        {preview ? "Pratinjau" : "Tulis"}
+                        {previewMode ? "Pratinjau" : "Tulis"}
                       </button>
                     ))}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setContent(
-                        (prev) =>
-                          (prev.trim() ? prev.trimEnd() + "\n\n" : "") +
-                          DISK_TEMPLATE
-                      )
-                    }
-                    className={`${btnSecondary} !h-9 !px-3 text-xs`}
-                  >
-                    Sisipkan template Disk Scheduling
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    {CONTENT_TEMPLATES.map(([label, template]) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() =>
+                          setContent(
+                            (prev) =>
+                              (prev.trim() ? prev.trimEnd() + "\n\n" : "") +
+                              template
+                          )
+                        }
+                        className={`${btnSecondary} !h-9 !px-3 text-xs`}
+                      >
+                        Template {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {contentPreview ? (
@@ -1455,75 +1638,158 @@ export default function TaskForm({ task }: { task?: Task }) {
             </div>
           </Section>
 
-          {/* ───── 3. Berkas dan tautan ───── */}
+          {/* ───── 3. Berkas, gambar, dan tautan ───── */}
           <Section
             step={3}
-            title="Berkas dan tautan"
-            description="Opsional. Unggah berkas, tambahkan tautan, atau keduanya. Tanpa berkas, tombol Unduh akan nonaktif."
+            title="Berkas, gambar, dan tautan"
+            description="Semuanya opsional. Tanpa berkas, tombol Unduh akan nonaktif; tanpa gambar, kartu memakai sampul pengganti."
           >
-            {/* Input asli disembunyikan; area seret-lepas dan tombol memicunya */}
-            <input
-              key={fileInputKey}
-              ref={fileInputRef}
-              id={fileInputId}
-              type="file"
-              accept={FILE_EXTENSIONS.join(",")}
-              onChange={handleFileInput}
-              className="peer sr-only"
-            />
+            {/* Berkas. Input asli disembunyikan; area seret-lepas dan tombol memicunya */}
+            <div>
+              <p className={fieldLabel}>Berkas (opsional)</p>
 
-            {showNew && file && (
-              <FileCard
-                thumb={thumbNode}
-                name={file.name}
-                meta={`${getFileExtension(file.name) ?? "Berkas"} • ${formatSize(file.size)}`}
-                badge="Baru"
-                actions={
-                  <>
-                    <button
-                      type="button"
-                      onClick={openFilePicker}
-                      className={btnSmall}
-                    >
-                      <Icon name="refresh" size="h-3.5 w-3.5" />
-                      Ganti
-                    </button>
-                    <button
-                      type="button"
-                      onClick={clearPickedFile}
-                      className={btnSmallDanger}
-                    >
-                      <Icon name="x" size="h-3.5 w-3.5" />
-                      Batalkan
-                    </button>
-                  </>
-                }
-              >
-                <p
-                  aria-live="polite"
-                  className={`mt-2 text-xs leading-5 ${textMuted}`}
+              <input
+                key={fileInputKey}
+                ref={fileInputRef}
+                id={fileInputId}
+                type="file"
+                accept={FILE_EXTENSIONS.join(",")}
+                onChange={handleFileInput}
+                className="peer sr-only"
+              />
+
+              {showNew && file && (
+                <FileCard
+                  thumb={
+                    <TilePlaceholder
+                      icon={
+                        getPreviewKind(file.name) === "image" ? "image" : "file"
+                      }
+                    />
+                  }
+                  name={file.name}
+                  meta={`${getFileExtension(file.name) ?? "Berkas"} • ${formatSize(file.size)}`}
+                  badge="Baru"
+                  actions={
+                    <>
+                      <button
+                        type="button"
+                        onClick={openFilePicker}
+                        className={btnSmall}
+                      >
+                        <Icon name="refresh" size="h-3.5 w-3.5" />
+                        Ganti
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearPickedFile}
+                        className={btnSmallDanger}
+                      >
+                        <Icon name="x" size="h-3.5 w-3.5" />
+                        Batalkan
+                      </button>
+                    </>
+                  }
                 >
-                  {previewMessage}
-                  {currentFile &&
-                    ` Berkas ini akan menggantikan ${currentFile} saat disimpan.`}
-                </p>
-              </FileCard>
-            )}
+                  {currentFile && (
+                    <p
+                      aria-live="polite"
+                      className={`mt-2 text-xs leading-5 ${textMuted}`}
+                    >
+                      Berkas ini akan menggantikan {currentFile} saat disimpan.
+                    </p>
+                  )}
+                </FileCard>
+              )}
 
-            {showCurrent && currentFile && (
+              {showCurrent && currentFile && (
+                <FileCard
+                  thumb={
+                    <TilePlaceholder
+                      icon={
+                        getPreviewKind(currentFile) === "image"
+                          ? "image"
+                          : "file"
+                      }
+                    />
+                  }
+                  name={currentFile}
+                  meta={`${getFileExtension(currentFile) ?? "Berkas"} • Berkas saat ini`}
+                  actions={
+                    <>
+                      <button
+                        type="button"
+                        onClick={openFilePicker}
+                        className={btnSmall}
+                      >
+                        <Icon name="refresh" size="h-3.5 w-3.5" />
+                        Ganti
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRemoveFile(true)}
+                        className={btnSmallDanger}
+                      >
+                        <Icon name="trash" size="h-3.5 w-3.5" />
+                        Hapus
+                      </button>
+                    </>
+                  }
+                />
+              )}
+
+              {showRemoved && currentFile && (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200">
+                  <span className="min-w-0 break-words">
+                    Berkas <strong>{currentFile}</strong> akan dihapus saat tugas
+                    disimpan.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setRemoveFile(false)}
+                    className={btnSmall}
+                  >
+                    <Icon name="undo" size="h-3.5 w-3.5" />
+                    Urungkan
+                  </button>
+                </div>
+              )}
+
+              {(showRemoved || (!showNew && !showCurrent)) && dropzone}
+
+              {fileError && <FieldError id="berkas-error" message={fileError} />}
+            </div>
+
+            {/* Gambar sampul: otomatis dari berkas, atau pilihan sendiri */}
+            <div className="mt-5">
+              <p className={fieldLabel}>Gambar sampul kartu (opsional)</p>
+
+              <input
+                ref={coverInputRef}
+                type="file"
+                accept={COVER_EXTENSIONS.join(",")}
+                onChange={handleCoverInput}
+                aria-label="Pilih gambar sampul"
+                className="hidden"
+              />
+
               <FileCard
-                thumb={thumbNode}
-                name={currentFile}
-                meta={`${getFileExtension(currentFile) ?? "Berkas"} • Berkas saat ini`}
+                thumb={coverThumb}
+                name="Gambar sampul"
+                meta={coverMeta}
+                badge={coverBadge}
                 actions={
                   <>
                     <button
                       type="button"
-                      onClick={openFilePicker}
+                      onClick={openCoverPicker}
                       className={btnSmall}
                     >
-                      <Icon name="refresh" size="h-3.5 w-3.5" />
-                      Ganti
+                      <Icon
+                        name={shownPreview && coverIsManual ? "refresh" : "upload"}
+                        size="h-3.5 w-3.5"
+                      />
+                      {coverPickLabel}
                     </button>
                     {canRegenerate && (
                       <button
@@ -1532,17 +1798,39 @@ export default function TaskForm({ task }: { task?: Task }) {
                         className={btnSmall}
                       >
                         <Icon name="image" size="h-3.5 w-3.5" />
-                        Buat pratinjau
+                        Buat otomatis
                       </button>
                     )}
-                    <button
-                      type="button"
-                      onClick={() => setRemoveFile(true)}
-                      className={btnSmallDanger}
-                    >
-                      <Icon name="trash" size="h-3.5 w-3.5" />
-                      Hapus
-                    </button>
+                    {preview && manualCover && (
+                      <button
+                        type="button"
+                        onClick={cancelManualCover}
+                        className={btnSmallDanger}
+                      >
+                        <Icon name="x" size="h-3.5 w-3.5" />
+                        Batalkan
+                      </button>
+                    )}
+                    {!preview && storedCoverKept && (
+                      <button
+                        type="button"
+                        onClick={removeStoredCover}
+                        className={btnSmallDanger}
+                      >
+                        <Icon name="trash" size="h-3.5 w-3.5" />
+                        Hapus
+                      </button>
+                    )}
+                    {coverRemoved && (
+                      <button
+                        type="button"
+                        onClick={() => setRemoveCover(false)}
+                        className={btnSmall}
+                      >
+                        <Icon name="undo" size="h-3.5 w-3.5" />
+                        Urungkan
+                      </button>
+                    )}
                   </>
                 }
               >
@@ -1550,31 +1838,16 @@ export default function TaskForm({ task }: { task?: Task }) {
                   aria-live="polite"
                   className={`mt-2 text-xs leading-5 ${textMuted}`}
                 >
-                  {previewMessage}
+                  {coverMessage}
                 </p>
               </FileCard>
-            )}
 
-            {showRemoved && currentFile && (
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200">
-                <span className="min-w-0 break-words">
-                  Berkas <strong>{currentFile}</strong> akan dihapus saat tugas
-                  disimpan.
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setRemoveFile(false)}
-                  className={btnSmall}
-                >
-                  <Icon name="undo" size="h-3.5 w-3.5" />
-                  Urungkan
-                </button>
-              </div>
-            )}
-
-            {(showRemoved || (!showNew && !showCurrent)) && dropzone}
-
-            {fileError && <FieldError id="berkas-error" message={fileError} />}
+              {coverError && <FieldError id="sampul-error" message={coverError} />}
+              <p className={fieldHint}>
+                JPG, PNG, WebP, atau GIF, maksimal {COVER_MAX_MB} MB. Gambar
+                pilihanmu dipakai lebih dulu daripada gambar otomatis dari berkas.
+              </p>
+            </div>
 
             {/* Tautan: berdiri sendiri, bisa dipakai bersama atau tanpa berkas */}
             <Field
@@ -1737,7 +2010,7 @@ export default function TaskForm({ task }: { task?: Task }) {
                   </p>
                 )}
                 <p className="text-slate-500 dark:text-slate-400">
-                  Pintasan: Ctrl/⌘ + S
+                  Pintasan: Ctrl + S
                 </p>
               </div>
             </div>
